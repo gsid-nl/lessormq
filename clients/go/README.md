@@ -8,6 +8,9 @@ the server decides and clients only claim, run, ack or fail. Standard library on
 go get github.com/gsid-nl/lessormq-go
 ```
 
+This module is published from `clients/go` in [gsid-nl/lessormq](https://github.com/gsid-nl/lessormq);
+issues and pull requests go there.
+
 ## Publish
 
 ```go

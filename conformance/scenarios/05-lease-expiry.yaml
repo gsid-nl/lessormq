@@ -10,7 +10,8 @@ steps:
   - sleep: 2.2
   - ack: {lease: $l1}
     expect: {status: 409, body.code: lease_lost}
-  - claim: {}
+  # A long lease this time, so the steps before its ack cannot outlast it on a slow machine.
+  - claim: {lease_seconds: 30}
     save: l2
     expect: {status: 200, body.message.id: $m.body.id, body.message.attempt: 2}
   - fail: {lease: $l1, error: {message: late}}
