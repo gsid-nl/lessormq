@@ -7,7 +7,7 @@
   "homepage": "https://lessormq.dev",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/gsid-nl/lessorMQ.git",
+    "url": "git+https://github.com/gsid-nl/lessormq.git",
     "directory": "clients/typescript"
   },
   "type": "module",

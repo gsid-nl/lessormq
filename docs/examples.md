@@ -52,11 +52,11 @@ curl -sS -o /dev/null -w "ack: %{http_code}\n" -X POST "$url/v1/messages/$(echo 
   -H "$auth" -H "$json" -d "{\"receipt\": \"$(echo "$lease" | jq -r .receipt)\"}"
 ```
 
-[examples/curl/quickstart.sh](https://github.com/gsid-nl/lessorMQ/blob/main/examples/curl/quickstart.sh)
+[examples/curl/quickstart.sh](https://github.com/gsid-nl/lessormq/blob/main/examples/curl/quickstart.sh)
 
 ## PHP
 
-With the [PHP library](https://github.com/gsid-nl/lessorMQ/blob/main/clients/php/README.md)
+With the [PHP library](https://github.com/gsid-nl/lessormq/blob/main/clients/php/README.md)
 (`composer require lessormq/client`). The worker acks when the handler returns and fails
 when it throws; it extends the lease on its own while a long handler runs.
 
@@ -105,11 +105,11 @@ printf("done: %d handled\n", $handled);
 exit($handled === 3 ? 0 : 1);
 ```
 
-[examples/php/worker.php](https://github.com/gsid-nl/lessorMQ/blob/main/examples/php/worker.php)
+[examples/php/worker.php](https://github.com/gsid-nl/lessormq/blob/main/examples/php/worker.php)
 
 ## Symfony Messenger
 
-With the [Messenger transport](https://github.com/gsid-nl/lessorMQ/blob/main/clients/symfony-messenger/README.md)
+With the [Messenger transport](https://github.com/gsid-nl/lessormq/blob/main/clients/symfony-messenger/README.md)
 (`composer require lessormq/messenger`), your existing handlers run unchanged. Leave
 retries to the queue:
 
@@ -183,7 +183,7 @@ print(f"done: {handled} handled")
 sys.exit(0 if handled == 3 else 1)
 ```
 
-[examples/python/worker.py](https://github.com/gsid-nl/lessorMQ/blob/main/examples/python/worker.py)
+[examples/python/worker.py](https://github.com/gsid-nl/lessormq/blob/main/examples/python/worker.py)
 
 ## TypeScript
 
@@ -226,7 +226,7 @@ console.log(`done: ${handled} handled`);
 process.exit(handled === 3 ? 0 : 1);
 ```
 
-[examples/typescript/worker.ts](https://github.com/gsid-nl/lessorMQ/blob/main/examples/typescript/worker.ts)
+[examples/typescript/worker.ts](https://github.com/gsid-nl/lessormq/blob/main/examples/typescript/worker.ts)
 
 ## Go
 
@@ -306,4 +306,4 @@ func main() {
 }
 ```
 
-[examples/go/main.go](https://github.com/gsid-nl/lessorMQ/blob/main/examples/go/main.go)
+[examples/go/main.go](https://github.com/gsid-nl/lessormq/blob/main/examples/go/main.go)

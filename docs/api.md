@@ -5,7 +5,7 @@ description: "Every endpoint of the LessorMQ v1 API, with its requests, answers 
 
 # API reference
 
-_Generated from [openapi.yaml](https://github.com/gsid-nl/lessorMQ/blob/main/docs/openapi.yaml), which is the source of truth._
+_Generated from [openapi.yaml](https://github.com/gsid-nl/lessormq/blob/main/docs/openapi.yaml), which is the source of truth._
 
 LessorMQ leases each message to one worker at a time. Everything that happens to a
 message after that is decided by the server, from the settings of its queue: when it

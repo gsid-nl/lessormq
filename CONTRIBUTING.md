@@ -1,7 +1,7 @@
 # Contributing to LessorMQ
 
 Thank you for helping. Issues and pull requests are welcome on
-[GitHub](https://github.com/gsid-nl/lessorMQ).
+[GitHub](https://github.com/gsid-nl/lessormq).
 
 ## The one rule
 

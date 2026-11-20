@@ -11,7 +11,7 @@ minutes. You need Docker, PHP 8.4 with Composer, curl and jq.
 ## Start a server
 
 ```sh
-git clone https://github.com/gsid-nl/lessorMQ.git && cd lessorMQ
+git clone https://github.com/gsid-nl/lessormq.git && cd lessormq
 composer install
 docker compose up -d --wait
 ```

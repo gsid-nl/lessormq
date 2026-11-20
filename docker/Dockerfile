@@ -16,7 +16,7 @@ FROM base AS server
 
 LABEL org.opencontainers.image.title="LessorMQ" \
       org.opencontainers.image.description="Message queue over HTTP where the server decides what happens to every message" \
-      org.opencontainers.image.source="https://github.com/gsid-nl/lessorMQ" \
+      org.opencontainers.image.source="https://github.com/gsid-nl/lessormq" \
       org.opencontainers.image.licenses="Apache-2.0"
 
 ENV APP_ENV=prod \

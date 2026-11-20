@@ -26,7 +26,7 @@ server takes the message back and counts the attempt, whatever the worker is sti
 ## Quickstart
 
 ```sh
-git clone https://github.com/gsid-nl/lessorMQ.git && cd lessorMQ
+git clone https://github.com/gsid-nl/lessormq.git && cd lessormq
 composer install
 docker compose up -d --wait
 ```

@@ -18,7 +18,7 @@ require __DIR__ . '/../../vendor/autoload.php';
 
 use Symfony\Component\Yaml\Yaml;
 
-const SOURCE = 'https://github.com/gsid-nl/lessorMQ/blob/main/';
+const SOURCE = 'https://github.com/gsid-nl/lessormq/blob/main/';
 
 $docs = dirname(__DIR__);
 $root = dirname($docs);

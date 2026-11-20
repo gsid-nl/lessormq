@@ -6,7 +6,7 @@ description: "How LessorMQ behaves and the rules a conforming client follows: le
 # The protocol
 
 LessorMQ is a message queue over HTTP. This document explains how it behaves and what a
-client must do. The exact requests and responses are in [openapi.yaml](https://github.com/gsid-nl/lessorMQ/blob/main/docs/openapi.yaml).
+client must do. The exact requests and responses are in [openapi.yaml](https://github.com/gsid-nl/lessormq/blob/main/docs/openapi.yaml).
 
 ## The rule: the server decides
 

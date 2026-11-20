@@ -22,7 +22,7 @@ The protocol by hand: publish, claim, fail, claim again, ack.
 
 ## PHP
 
-With the [PHP library](https://github.com/gsid-nl/lessorMQ/blob/main/clients/php/README.md)
+With the [PHP library](https://github.com/gsid-nl/lessormq/blob/main/clients/php/README.md)
 (`composer require lessormq/client`). The worker acks when the handler returns and fails
 when it throws; it extends the lease on its own while a long handler runs.
 
@@ -30,7 +30,7 @@ when it throws; it extends the lease on its own while a long handler runs.
 
 ## Symfony Messenger
 
-With the [Messenger transport](https://github.com/gsid-nl/lessorMQ/blob/main/clients/symfony-messenger/README.md)
+With the [Messenger transport](https://github.com/gsid-nl/lessormq/blob/main/clients/symfony-messenger/README.md)
 (`composer require lessormq/messenger`), your existing handlers run unchanged. Leave
 retries to the queue:
 

@@ -3,7 +3,7 @@
 ## Reporting a vulnerability
 
 Please do not open a public issue for a security problem. Report it privately through
-[GitHub's private vulnerability reporting](https://github.com/gsid-nl/lessorMQ/security/advisories/new),
+[GitHub's private vulnerability reporting](https://github.com/gsid-nl/lessormq/security/advisories/new),
 or by e-mail to security@gsid.nl.
 
 Describe what you found, how to reproduce it, and what an attacker could do with it. We
