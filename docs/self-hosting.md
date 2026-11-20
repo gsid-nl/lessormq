@@ -17,6 +17,19 @@ as you need behind a load balancer.
 - Redis 6 or newer (or Valkey): queue settings cache, pause state, sweep throttling,
   usage counters. Losing Redis loses nothing that matters; it is rebuilt from MariaDB.
 
+## The image
+
+Every release is an image for amd64 and arm64, `ghcr.io/gsid-nl/lessormq:<version>`
+(`:0.3` follows the latest 0.3.x, `:latest` the latest release). It runs PHP-FPM on
+port 9000 as uid 1000, with the application in `/app`: put nginx, or any FastCGI server,
+in front and send every request to `/app/public/index.php`. Given a command, the image
+runs that instead, so the same image runs the migrations and the scheduled jobs:
+
+```sh
+docker run --rm --env-file lessormq.env ghcr.io/gsid-nl/lessormq:<version> \
+  bin/console doctrine:migrations:migrate --no-interaction
+```
+
 ## Configuration
 
 Environment variables:

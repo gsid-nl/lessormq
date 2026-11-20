@@ -50,6 +50,27 @@ Each client's README says how to run its own tests.
 `docs/tools/examples.template.md` and run `php docs/tools/build.php`. Every example in
 `examples/` runs against a real server in `examples/test.sh`.
 
+## Releases
+
+A maintainer releases by pushing a version tag; `.github/workflows/release.yml` runs the
+whole of CI on the tagged commit (the conformance suite through every client included)
+and publishes only when it passes:
+
+| Tag | Publishes |
+|---|---|
+| `0.3.0` | the server image `ghcr.io/gsid-nl/lessormq`, and a GitHub release |
+| `python-0.2.0` | `lessormq` on PyPI |
+| `typescript-0.2.0` | `lessormq` on npm |
+| `php-0.2.0` | `lessormq/client` on Packagist, as tag `v0.2.0` on gsid-nl/lessormq-php |
+| `messenger-0.2.0` | `lessormq/messenger` on Packagist, as tag `v0.2.0` on gsid-nl/lessormq-messenger |
+| `go-0.2.0` | `github.com/gsid-nl/lessormq-go`, as tag `v0.2.0` on that repository |
+
+The Python and TypeScript packages carry their version (`__init__.py`, `package.json`);
+raise it in a commit before tagging, or the release stops. Clients are versioned apart
+from the server and from each other. When `lessormq/client` moves to a new minor version,
+raise its branch alias in `clients/php/composer.json` and the constraint on it in
+`clients/symfony-messenger/composer.json`.
+
 ## Commits and pull requests
 
 Keep a pull request to one change, with tests. Describe what changed and why in the

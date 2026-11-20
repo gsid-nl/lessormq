@@ -6,7 +6,7 @@
     "keywords": ["symfony", "messenger", "transport", "message-queue", "lessormq"],
     "require": {
         "php": ">=8.2",
-        "lessormq/client": "@dev",
+        "lessormq/client": "^0.1",
         "psr/log": "^1.1 || ^2.0 || ^3.0",
         "symfony/dependency-injection": "^7.2",
         "symfony/http-kernel": "^7.2",
@@ -21,8 +21,14 @@
         "symfony/serializer": "^7.2"
     },
     "repositories": [
-        {"type": "path", "url": "../php", "options": {"symlink": true}}
+        {
+            "type": "path",
+            "url": "../php",
+            "options": {"symlink": true, "versions": {"lessormq/client": "dev-main"}}
+        }
     ],
+    "minimum-stability": "dev",
+    "prefer-stable": true,
     "autoload": {
         "psr-4": {
             "LessorMQ\\Messenger\\": "src/"
@@ -32,6 +38,11 @@
         "psr-4": {
             "LessorMQ\\Messenger\\Tests\\": "tests/",
             "LessorMQ\\Tests\\": "../php/tests/"
+        }
+    },
+    "extra": {
+        "branch-alias": {
+            "dev-main": "0.1.x-dev"
         }
     },
     "config": {

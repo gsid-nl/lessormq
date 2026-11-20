@@ -1,11 +1,13 @@
 # Tests for the server, every client, the documentation and the examples, on every push
-# and pull request. Releases are separate.
+# and pull request. release.yml runs all of it again on a version tag before it publishes
+# anything.
 name: ci
 
 on:
   push:
     branches: [main]
   pull_request:
+  workflow_call:
 
 permissions:
   contents: read
