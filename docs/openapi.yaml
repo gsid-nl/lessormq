@@ -1,0 +1,1726 @@
+openapi: 3.1.0
+
+info:
+  title: LessorMQ API
+  version: 1.0.0-draft
+  summary: Multi-tenant message queue over HTTP where the server decides and clients only claim, run, ack or fail.
+  description: |
+    LessorMQ leases each message to one worker at a time. Everything that happens to a
+    message after that is decided by the server, from the settings of its queue: when it
+    is retried, how long it waits, when it is dead-lettered, which route it may not take
+    again, how long it is kept.
+
+    A client does four things: publish, claim, then ack or fail (and extend a lease while
+    a long job runs). It may pass settings such as a lease length or a maximum number of
+    attempts; the server applies them within the limits of the queue. A client never
+    decides whether a message is retried.
+
+    See `docs/protocol.md` for the concepts, the message lifecycle and the rules a
+    conforming client must follow.
+
+    Conventions:
+
+    - Every timestamp is RFC 3339 in UTC, with a `Z` suffix.
+    - Every error is `application/problem+json` (RFC 9457) with a stable `code`.
+    - Clients must ignore response fields they do not know: fields are added within v1,
+      never removed or changed in meaning.
+  license:
+    name: Apache-2.0
+    identifier: Apache-2.0
+
+servers:
+  - url: http://localhost:8080
+    description: Local instance (docker compose)
+
+security:
+  - apiKey: []
+
+tags:
+  - name: Publishing
+    description: Put messages on a queue. Requires the `publish` scope.
+  - name: Consuming
+    description: Claim messages and report the outcome. Requires the `consume` scope.
+  - name: Queues
+    description: Queue settings and statistics.
+  - name: Messages
+    description: Inspect, replay and delete messages, including the dead-letter set. Requires the `admin` scope.
+  - name: API keys
+    description: Keys of the calling tenant. Requires the `admin` scope.
+  - name: Tenant
+    description: The calling tenant's own profile, quotas and usage. Requires the `admin` scope.
+  - name: Tenants
+    description: |
+      Create and manage tenants, for a web interface or provisioning tool run by whoever
+      operates the installation. Requires an operator key.
+  - name: System
+    description: Liveness, no authentication.
+
+paths:
+  /v1/queues/{queue}/messages:
+    parameters:
+      - $ref: '#/components/parameters/QueueName'
+    post:
+      tags: [Publishing]
+      operationId: publish
+      summary: Publish a message
+      description: |
+        Creates the queue with the tenant's default settings if it does not exist yet.
+
+        With a `dedup_key`, a second publish with the same key while the first message is
+        still open (pending or processing) returns that message with status 200 and
+        `duplicate: true` instead of creating a new one. Client libraries may generate a
+        `dedup_key` per publish call so that their own HTTP retries cannot create
+        duplicates.
+
+        Publishing to a paused queue is allowed: pausing only stops claims.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PublishRequest'
+      responses:
+        '201':
+          description: Message created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublishResponse'
+        '200':
+          description: An open message with the same `dedup_key` exists; it is returned instead.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublishResponse'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+    get:
+      tags: [Messages]
+      operationId: listMessages
+      summary: List messages of a queue
+      description: Newest first. Paginated with an opaque cursor.
+      parameters:
+        - name: status
+          in: query
+          schema:
+            $ref: '#/components/schemas/MessageStatus'
+        - name: error_type
+          in: query
+          description: Only messages whose last error has this `type`.
+          schema:
+            type: string
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: One page of messages.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessagePage'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /v1/queues/{queue}/claims:
+    parameters:
+      - $ref: '#/components/parameters/QueueName'
+    post:
+      tags: [Consuming]
+      operationId: claim
+      summary: Claim the next message
+      description: |
+        Leases the next ready message to the caller and returns it with a `receipt`. Only
+        the holder of that receipt can extend, ack, fail or release the message, and only
+        until `lease_until`. After that the lease has expired: the server makes the
+        message available again and counts the attempt.
+
+        With `wait_seconds`, the request waits until a message becomes ready or the time
+        runs out (long polling). A paused queue behaves as an empty one.
+
+        With a `route`, the server will not hand out a message that already failed on
+        that route, while the queue's `route_policy` says so.
+
+        Messages are handed out roughly in order of availability; strict ordering is not
+        guaranteed. Delivery is at least once: a handler must tolerate seeing a message
+        again.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ClaimRequest'
+      responses:
+        '200':
+          description: A message is leased to the caller.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Lease'
+        '204':
+          description: No message was ready within `wait_seconds`, or the queue is paused.
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /v1/messages/{id}/extend:
+    parameters:
+      - $ref: '#/components/parameters/MessageId'
+    post:
+      tags: [Consuming]
+      operationId: extend
+      summary: Extend a lease
+      description: |
+        Moves `lease_until` to now plus `lease_seconds` (or the queue's default). A worker
+        calls this while a long job runs; client libraries do it on a timer, at about a
+        third of the lease.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ExtendRequest'
+      responses:
+        '200':
+          description: Lease extended.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExtendResponse'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/LeaseLost'
+
+  /v1/messages/{id}/ack:
+    parameters:
+      - $ref: '#/components/parameters/MessageId'
+    post:
+      tags: [Consuming]
+      operationId: ack
+      summary: Report success
+      description: |
+        Marks the message completed. Idempotent per receipt: repeating an ack with the
+        same receipt returns 204 again.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReceiptRequest'
+      responses:
+        '204':
+          description: Message completed.
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/LeaseLost'
+
+  /v1/messages/{id}/fail:
+    parameters:
+      - $ref: '#/components/parameters/MessageId'
+    post:
+      tags: [Consuming]
+      operationId: fail
+      summary: Report failure
+      description: |
+        Reports that the attempt failed. The server decides what happens next from the
+        queue settings and tells the caller in `outcome`; the caller does not act on it.
+
+        `permanent: true` is a fact, not a request: it says the input itself cannot be
+        processed (for example, it cannot be decoded). The queue's `on_permanent` setting
+        decides whether that skips the remaining attempts.
+
+        Idempotent per receipt: repeating a fail with the same receipt returns the same
+        outcome, as long as the message has not been claimed again.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FailRequest'
+      responses:
+        '200':
+          description: Failure recorded; `outcome` says what the server did.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FailResponse'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/LeaseLost'
+
+  /v1/messages/{id}/release:
+    parameters:
+      - $ref: '#/components/parameters/MessageId'
+    post:
+      tags: [Consuming]
+      operationId: release
+      summary: Give a message back without failing it
+      description: |
+        Ends the lease without an outcome, for a worker that has to stop before it can
+        run the message (shutdown, lost a dependency). The attempt is not counted. The
+        message is available again after `delay_seconds`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReleaseRequest'
+      responses:
+        '204':
+          description: Message released.
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/LeaseLost'
+
+  /v1/messages/{id}:
+    parameters:
+      - $ref: '#/components/parameters/MessageId'
+    get:
+      tags: [Messages]
+      operationId: getMessage
+      summary: Get a message
+      responses:
+        '200':
+          description: The message.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Message'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      tags: [Messages]
+      operationId: deleteMessage
+      summary: Delete a message
+      description: A message that is processing cannot be deleted; wait for its lease to end.
+      responses:
+        '204':
+          description: Message deleted.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/InvalidState'
+
+  /v1/messages/{id}/replay:
+    parameters:
+      - $ref: '#/components/parameters/MessageId'
+    post:
+      tags: [Messages]
+      operationId: replayMessage
+      summary: Make a failed or completed message available again
+      description: |
+        Puts the message back to pending with its attempts reset to zero and its failed
+        routes cleared. Only from `failed` or `completed`; a pending or processing message
+        returns 409.
+      responses:
+        '200':
+          description: Message is pending again.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Message'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/InvalidState'
+
+  /v1/queues:
+    get:
+      tags: [Queues]
+      operationId: listQueues
+      summary: List the tenant's queues
+      description: Requires the `admin` scope.
+      responses:
+        '200':
+          description: All queues of the tenant, with settings and statistics.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Queue'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /v1/queues/{queue}:
+    parameters:
+      - $ref: '#/components/parameters/QueueName'
+    get:
+      tags: [Queues]
+      operationId: getQueue
+      summary: Get a queue's settings and statistics
+      description: Requires the `consume` or `admin` scope.
+      responses:
+        '200':
+          description: The queue.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Queue'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      tags: [Queues]
+      operationId: updateQueue
+      summary: Change queue settings
+      description: |
+        Requires the `admin` scope. Only the fields present change. Creates the queue if it
+        does not exist, so settings can be in place before the first publish.
+
+        Pausing is a setting too: `{"paused": true}` stops claims, publishes still land.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/QueueSettingsPatch'
+      responses:
+        '200':
+          description: The queue with its new settings.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Queue'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /v1/queues/{queue}/replay:
+    parameters:
+      - $ref: '#/components/parameters/QueueName'
+    post:
+      tags: [Messages]
+      operationId: replayMessages
+      summary: Replay many messages
+      description: Replays every message matching the filter, as `replayMessage` does for one.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BulkFilter'
+      responses:
+        '200':
+          description: Number of messages replayed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BulkResult'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /v1/queues/{queue}/purge:
+    parameters:
+      - $ref: '#/components/parameters/QueueName'
+    post:
+      tags: [Messages]
+      operationId: purgeMessages
+      summary: Delete many messages
+      description: Deletes every message matching the filter. Never touches pending or processing messages.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BulkFilter'
+      responses:
+        '200':
+          description: Number of messages deleted.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BulkResult'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /v1/api-keys:
+    get:
+      tags: [API keys]
+      operationId: listApiKeys
+      summary: List the tenant's API keys
+      description: Secrets are never returned after creation; keys are recognised by `prefix`.
+      responses:
+        '200':
+          description: All keys of the tenant.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ApiKey'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    post:
+      tags: [API keys]
+      operationId: createApiKey
+      summary: Create an API key
+      description: The response is the only time the secret is shown. Store it right away.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ApiKeyCreate'
+      responses:
+        '201':
+          description: Key created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiKeyCreated'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /v1/api-keys/{keyId}:
+    parameters:
+      - name: keyId
+        in: path
+        required: true
+        schema:
+          type: string
+    delete:
+      tags: [API keys]
+      operationId: revokeApiKey
+      summary: Revoke an API key
+      description: Takes effect immediately. A key cannot revoke itself, so a tenant cannot lock itself out.
+      responses:
+        '204':
+          description: Key revoked.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/InvalidState'
+
+  /v1/tenant:
+    get:
+      tags: [Tenant]
+      operationId: getOwnTenant
+      summary: Get the calling tenant
+      responses:
+        '200':
+          description: The tenant the key belongs to.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Tenant'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    patch:
+      tags: [Tenant]
+      operationId: updateOwnTenant
+      summary: Change the calling tenant's queue defaults
+      description: A tenant may change the defaults for its new queues; its name, status and quotas are the operator's.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                queue_defaults:
+                  $ref: '#/components/schemas/QueueSettingsPatch'
+      responses:
+        '200':
+          description: The tenant with its new defaults.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Tenant'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /v1/tenants:
+    get:
+      tags: [Tenants]
+      operationId: listTenants
+      summary: List tenants
+      parameters:
+        - name: status
+          in: query
+          schema:
+            $ref: '#/components/schemas/TenantStatus'
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: One page of tenants.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, next_cursor]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Tenant'
+                  next_cursor:
+                    type: [string, 'null']
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    post:
+      tags: [Tenants]
+      operationId: createTenant
+      summary: Create a tenant
+      description: |
+        By default also creates a first API key with all three scopes and returns its
+        secret once, so the interface can hand it to the new tenant.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TenantCreate'
+      responses:
+        '201':
+          description: Tenant created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TenantCreated'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/InvalidState'
+
+  /v1/tenants/{tenantId}:
+    parameters:
+      - $ref: '#/components/parameters/TenantId'
+    get:
+      tags: [Tenants]
+      operationId: getTenant
+      summary: Get a tenant
+      responses:
+        '200':
+          description: The tenant.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Tenant'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      tags: [Tenants]
+      operationId: updateTenant
+      summary: Change a tenant
+      description: |
+        Suspending a tenant (`status: suspended`) makes every request with its keys return
+        `403 tenant_suspended`; its messages stay as they are and leases run out normally.
+        Setting it back to `active` resumes everything.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TenantPatch'
+      responses:
+        '200':
+          description: The tenant after the change.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Tenant'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/InvalidState'
+    delete:
+      tags: [Tenants]
+      operationId: deleteTenant
+      summary: Delete a tenant and all its data
+      description: |
+        Only a suspended tenant can be deleted, so a tenant in use is never removed by one
+        call. Its status becomes `deleting` and its keys, queues and messages are removed
+        in the background; the tenant disappears when that is done.
+      responses:
+        '202':
+          description: Deletion started.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Tenant'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/InvalidState'
+
+  /v1/tenants/{tenantId}/api-keys:
+    parameters:
+      - $ref: '#/components/parameters/TenantId'
+    get:
+      tags: [Tenants]
+      operationId: listTenantApiKeys
+      summary: List a tenant's API keys
+      responses:
+        '200':
+          description: All keys of the tenant.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ApiKey'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    post:
+      tags: [Tenants]
+      operationId: createTenantApiKey
+      summary: Create an API key for a tenant
+      description: For example when a tenant lost its last admin key. The secret is shown once.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ApiKeyCreate'
+      responses:
+        '201':
+          description: Key created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiKeyCreated'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /v1/tenants/{tenantId}/api-keys/{keyId}:
+    parameters:
+      - $ref: '#/components/parameters/TenantId'
+      - name: keyId
+        in: path
+        required: true
+        schema:
+          type: string
+    delete:
+      tags: [Tenants]
+      operationId: revokeTenantApiKey
+      summary: Revoke a tenant's API key
+      responses:
+        '204':
+          description: Key revoked.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /healthz:
+    get:
+      tags: [System]
+      operationId: health
+      summary: Liveness and database reachability
+      security: []
+      responses:
+        '200':
+          description: The server and its database are reachable.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status:
+                    type: string
+                    const: ok
+        '503':
+          description: The database or Redis is unreachable.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+
+components:
+  securitySchemes:
+    apiKey:
+      type: http
+      scheme: bearer
+      bearerFormat: API key
+      description: |
+        `Authorization: Bearer <api key>`.
+
+        A tenant key identifies its tenant; there is no tenant in any path outside
+        `/v1/tenants`. Each tenant key has scopes (`publish`, `consume`, `admin`) and may
+        be limited to queue name patterns.
+
+        An operator key belongs to no tenant. It is for whoever runs the installation (a
+        web interface, a provisioning tool) and is the only key accepted on `/v1/tenants`.
+        With the header `LessorMQ-Tenant: <tenant id>` it may call every other endpoint as
+        an `admin` key of that tenant. The first operator key is created on the command
+        line; there is no endpoint that creates operator keys.
+
+  parameters:
+    QueueName:
+      name: queue
+      in: path
+      required: true
+      description: Queue name, unique within the tenant.
+      schema:
+        $ref: '#/components/schemas/QueueName'
+    TenantId:
+      name: tenantId
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/TenantId'
+    MessageId:
+      name: id
+      in: path
+      required: true
+      description: Message id as returned by publish or claim. Opaque to clients.
+      schema:
+        type: string
+    Limit:
+      name: limit
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+    Cursor:
+      name: cursor
+      in: query
+      description: The `next_cursor` of the previous page.
+      schema:
+        type: string
+
+  headers:
+    RetryAfter:
+      description: Seconds to wait before the next request.
+      schema:
+        type: integer
+        minimum: 1
+
+  responses:
+    ValidationFailed:
+      description: The request is malformed or a value is out of range. Code `validation_failed`.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    Unauthorized:
+      description: Missing, unknown or revoked API key. Code `unauthorized`.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    Forbidden:
+      description: |
+        The key lacks the scope, the queue is outside its patterns, or a tenant key called
+        an operator endpoint: code `forbidden`. The key's tenant is suspended: code
+        `tenant_suspended`.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    NotFound:
+      description: No such queue or message for this tenant. Code `not_found`.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    LeaseLost:
+      description: |
+        The receipt is not the current lease of this message: the lease expired, the
+        message was claimed again, or it was released. The worker must stop reporting on
+        this message; the server has already made it available again. Code `lease_lost`.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    InvalidState:
+      description: The message or key is in a state that does not allow this. Code `invalid_state`.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    PayloadTooLarge:
+      description: The message is larger than the queue's `max_message_bytes`. Code `payload_too_large`.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    RateLimited:
+      description: The tenant exceeded a quota or rate limit. Code `rate_limited`.
+      headers:
+        Retry-After:
+          $ref: '#/components/headers/RetryAfter'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+
+  schemas:
+    QueueName:
+      type: string
+      pattern: '^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$'
+      examples: [image-import]
+
+    Route:
+      type: string
+      minLength: 1
+      maxLength: 255
+      description: |
+        The path a worker runs its jobs through: a VPN exit, a proxy, an API account, a
+        region. The server records the route of every attempt; with the queue's
+        `route_policy` set to `avoid_failed`, a message is not handed to a worker on a
+        route where it failed within the cooldown.
+      examples: [vpn-nl-03]
+
+    MessageStatus:
+      type: string
+      enum: [pending, processing, completed, failed]
+      description: |
+        `pending`: waiting for a worker (ready, or delayed until `available_at`).
+        `processing`: leased to a worker.
+        `completed`: acked.
+        `failed`: out of attempts, or permanently failed; this is the dead-letter set.
+
+    Headers:
+      type: object
+      additionalProperties:
+        type: string
+      description: Free string metadata, passed through untouched (for example a message type for a framework).
+      examples:
+        - type: App\Message\ImportImage
+
+    PublishRequest:
+      type: object
+      required: [body]
+      additionalProperties: false
+      properties:
+        body:
+          description: Any JSON value. Passed to the worker exactly as given.
+        headers:
+          $ref: '#/components/schemas/Headers'
+        dedup_key:
+          type: string
+          minLength: 1
+          maxLength: 255
+          description: While a message with this key is open in this queue, publishing again returns that message.
+        delay_seconds:
+          type: integer
+          minimum: 0
+          description: Make the message available this many seconds from now. Not together with `available_at`.
+        available_at:
+          type: string
+          format: date-time
+          description: Make the message available at this time. Not together with `delay_seconds`.
+        max_attempts:
+          type: integer
+          minimum: 1
+          description: Overrides the queue's `max_attempts` for this message, capped at the queue's `max_attempts_limit`.
+
+    PublishResponse:
+      type: object
+      required: [id, queue, status, created_at, available_at, duplicate]
+      properties:
+        id:
+          type: string
+        queue:
+          $ref: '#/components/schemas/QueueName'
+        status:
+          $ref: '#/components/schemas/MessageStatus'
+        created_at:
+          type: string
+          format: date-time
+        available_at:
+          type: string
+          format: date-time
+        duplicate:
+          type: boolean
+          description: True when an open message with the same `dedup_key` was returned instead of a new one.
+
+    ClaimRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        consumer:
+          type: string
+          maxLength: 255
+          description: Free identifier of the worker (hostname, pod name), shown in the dashboard. Not used for authorisation.
+        route:
+          $ref: '#/components/schemas/Route'
+        wait_seconds:
+          type: integer
+          minimum: 0
+          maximum: 20
+          default: 0
+          description: Wait up to this long for a message instead of returning 204 at once.
+        lease_seconds:
+          type: integer
+          minimum: 1
+          description: Lease length for this claim, capped at the queue's `max_lease_seconds`. Defaults to the queue's `lease_seconds`.
+
+    DeliveredMessage:
+      type: object
+      required: [id, queue, body, headers, attempt, max_attempts, created_at]
+      properties:
+        id:
+          type: string
+        queue:
+          $ref: '#/components/schemas/QueueName'
+        body:
+          description: The JSON value given at publish.
+        headers:
+          $ref: '#/components/schemas/Headers'
+        attempt:
+          type: integer
+          minimum: 1
+          description: Which attempt this is, counting this one.
+        max_attempts:
+          type: integer
+          minimum: 1
+        created_at:
+          type: string
+          format: date-time
+
+    Lease:
+      type: object
+      required: [receipt, lease_until, message]
+      properties:
+        receipt:
+          type: string
+          description: Proof of this lease. Required to extend, ack, fail or release. Opaque; a new one per claim.
+        lease_until:
+          type: string
+          format: date-time
+          description: The lease ends here unless it is extended.
+        message:
+          $ref: '#/components/schemas/DeliveredMessage'
+
+    ReceiptRequest:
+      type: object
+      required: [receipt]
+      additionalProperties: false
+      properties:
+        receipt:
+          type: string
+
+    ExtendRequest:
+      type: object
+      required: [receipt]
+      additionalProperties: false
+      properties:
+        receipt:
+          type: string
+        lease_seconds:
+          type: integer
+          minimum: 1
+          description: New lease length from now, capped at the queue's `max_lease_seconds`.
+
+    ExtendResponse:
+      type: object
+      required: [lease_until]
+      properties:
+        lease_until:
+          type: string
+          format: date-time
+
+    ErrorReport:
+      type: object
+      required: [message]
+      properties:
+        type:
+          type: string
+          maxLength: 255
+          description: Machine-readable kind of error, typically the exception class. Used to filter the dead-letter set.
+          examples: [App\Exception\DownloadBlocked]
+        message:
+          type: string
+          maxLength: 65535
+        details:
+          description: Any JSON value with more context (stack trace, response code). Stored, not interpreted.
+
+    FailRequest:
+      type: object
+      required: [receipt, error]
+      additionalProperties: false
+      properties:
+        receipt:
+          type: string
+        error:
+          $ref: '#/components/schemas/ErrorReport'
+        permanent:
+          type: boolean
+          default: false
+          description: The input itself cannot be processed. A fact for the server, which decides what it means via `on_permanent`.
+
+    FailResponse:
+      type: object
+      required: [outcome, attempt, max_attempts]
+      properties:
+        outcome:
+          type: string
+          enum: [retrying, dead_lettered, discarded]
+          description: |
+            What the server did. `retrying`: pending again from `available_at`.
+            `dead_lettered`: status `failed`. `discarded`: deleted (queue setting `on_exhausted: discard`).
+        available_at:
+          type: [string, 'null']
+          format: date-time
+        attempt:
+          type: integer
+        max_attempts:
+          type: integer
+
+    ReleaseRequest:
+      type: object
+      required: [receipt]
+      additionalProperties: false
+      properties:
+        receipt:
+          type: string
+        delay_seconds:
+          type: integer
+          minimum: 0
+          default: 0
+
+    Message:
+      type: object
+      description: The full message, as an administrator sees it.
+      required: [id, queue, status, body, headers, attempts, max_attempts, created_at, updated_at, available_at]
+      properties:
+        id:
+          type: string
+        queue:
+          $ref: '#/components/schemas/QueueName'
+        status:
+          $ref: '#/components/schemas/MessageStatus'
+        body:
+          description: The JSON value given at publish.
+        headers:
+          $ref: '#/components/schemas/Headers'
+        dedup_key:
+          type: [string, 'null']
+        attempts:
+          type: integer
+          minimum: 0
+          description: Attempts started so far; an expired lease counts, a release does not.
+        max_attempts:
+          type: integer
+        available_at:
+          type: string
+          format: date-time
+        lease_until:
+          type: [string, 'null']
+          format: date-time
+        consumer:
+          type: [string, 'null']
+          description: The `consumer` of the current or last claim.
+        last_error:
+          oneOf:
+            - $ref: '#/components/schemas/RecordedError'
+            - type: 'null'
+        failed_routes:
+          type: object
+          description: Route to the time an attempt last failed on it.
+          additionalProperties:
+            type: string
+            format: date-time
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: [string, 'null']
+          format: date-time
+        failed_at:
+          type: [string, 'null']
+          format: date-time
+
+    RecordedError:
+      allOf:
+        - $ref: '#/components/schemas/ErrorReport'
+        - type: object
+          required: [at, attempt, permanent]
+          properties:
+            at:
+              type: string
+              format: date-time
+            attempt:
+              type: integer
+            permanent:
+              type: boolean
+            expired:
+              type: boolean
+              description: True when the attempt ended because the lease expired, not by a fail call.
+            route:
+              type: [string, 'null']
+            consumer:
+              type: [string, 'null']
+
+    MessagePage:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Message'
+        next_cursor:
+          type: [string, 'null']
+
+    Backoff:
+      type: object
+      description: |
+        Delay before attempt n+1 after attempt n failed:
+        min(initial_seconds * multiplier^(n-1), max_seconds), then randomised by +/- jitter.
+      properties:
+        initial_seconds:
+          type: integer
+          minimum: 0
+          default: 10
+        multiplier:
+          type: number
+          minimum: 1
+          default: 2
+        max_seconds:
+          type: integer
+          minimum: 0
+          default: 3600
+        jitter:
+          type: number
+          minimum: 0
+          maximum: 1
+          default: 0.1
+
+    RoutePolicy:
+      type: object
+      properties:
+        mode:
+          type: string
+          enum: [none, avoid_failed]
+          default: none
+          description: '`avoid_failed`: do not hand a message to a worker on a route where it failed within `cooldown_seconds`.'
+        cooldown_seconds:
+          type: integer
+          minimum: 0
+          default: 3600
+          description: |
+            How long a failed route stays excluded for that message. When it runs out, the
+            route may be tried again, so a message that failed on every route still makes
+            progress and `max_attempts` ends it.
+
+    Retention:
+      type: object
+      properties:
+        completed_seconds:
+          type: integer
+          minimum: 0
+          default: 86400
+        failed_seconds:
+          type: integer
+          minimum: 0
+          default: 604800
+
+    QueueSettings:
+      type: object
+      required: [lease_seconds, max_lease_seconds, max_attempts, max_attempts_limit, backoff, on_exhausted, on_permanent, route_policy, retention, max_message_bytes, paused]
+      properties:
+        lease_seconds:
+          type: integer
+          minimum: 1
+          default: 300
+        max_lease_seconds:
+          type: integer
+          minimum: 1
+          default: 3600
+          description: Upper bound for one claim or one extend. A job may run longer as long as its worker keeps extending.
+        max_attempts:
+          type: integer
+          minimum: 1
+          default: 7
+        max_attempts_limit:
+          type: integer
+          minimum: 1
+          default: 25
+          description: Highest `max_attempts` a publisher may ask for.
+        backoff:
+          $ref: '#/components/schemas/Backoff'
+        on_exhausted:
+          type: string
+          enum: [dead_letter, discard]
+          default: dead_letter
+          description: What happens after the last attempt fails.
+        on_permanent:
+          type: string
+          enum: [dead_letter, retry]
+          default: dead_letter
+          description: 'What a fail with `permanent: true` does. `retry` treats it like any other failure.'
+        route_policy:
+          $ref: '#/components/schemas/RoutePolicy'
+        retention:
+          $ref: '#/components/schemas/Retention'
+        max_message_bytes:
+          type: integer
+          minimum: 1
+          default: 1048576
+          description: Upper bound for the encoded `body` plus `headers`.
+        paused:
+          type: boolean
+          default: false
+
+    QueueSettingsPatch:
+      type: object
+      additionalProperties: false
+      description: Any subset of the queue settings; nested objects are merged.
+      properties:
+        lease_seconds:
+          type: integer
+          minimum: 1
+        max_lease_seconds:
+          type: integer
+          minimum: 1
+        max_attempts:
+          type: integer
+          minimum: 1
+        max_attempts_limit:
+          type: integer
+          minimum: 1
+        backoff:
+          $ref: '#/components/schemas/Backoff'
+        on_exhausted:
+          type: string
+          enum: [dead_letter, discard]
+        on_permanent:
+          type: string
+          enum: [dead_letter, retry]
+        route_policy:
+          $ref: '#/components/schemas/RoutePolicy'
+        retention:
+          $ref: '#/components/schemas/Retention'
+        max_message_bytes:
+          type: integer
+          minimum: 1
+        paused:
+          type: boolean
+
+    QueueStats:
+      type: object
+      required: [ready, delayed, processing, completed, failed, oldest_ready_seconds, oldest_processing_seconds]
+      properties:
+        ready:
+          type: integer
+          description: Pending and available now.
+        delayed:
+          type: integer
+          description: Pending, available later (backoff or delay).
+        processing:
+          type: integer
+        completed:
+          type: integer
+          description: Completed and not yet removed by retention.
+        failed:
+          type: integer
+          description: The dead-letter set.
+        oldest_ready_seconds:
+          type: integer
+          description: How long the oldest ready message has been waiting. Grows when no worker takes the queue.
+        oldest_processing_seconds:
+          type: integer
+
+    Queue:
+      type: object
+      required: [name, settings, stats]
+      properties:
+        name:
+          $ref: '#/components/schemas/QueueName'
+        settings:
+          $ref: '#/components/schemas/QueueSettings'
+        stats:
+          $ref: '#/components/schemas/QueueStats'
+        paused_at:
+          type: [string, 'null']
+          format: date-time
+
+    BulkFilter:
+      type: object
+      required: [status]
+      additionalProperties: false
+      properties:
+        status:
+          type: string
+          enum: [completed, failed]
+        error_type:
+          type: string
+          description: Only messages whose last error has this `type`.
+        before:
+          type: string
+          format: date-time
+          description: Only messages that reached their status before this time.
+        limit:
+          type: integer
+          minimum: 1
+          maximum: 10000
+          default: 1000
+
+    BulkResult:
+      type: object
+      required: [count]
+      properties:
+        count:
+          type: integer
+
+    Scope:
+      type: string
+      enum: [publish, consume, admin]
+
+    ApiKey:
+      type: object
+      required: [id, name, prefix, scopes, queues, created_at]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        prefix:
+          type: string
+          description: The first characters of the secret, to recognise a key in logs and lists.
+        scopes:
+          type: array
+          items:
+            $ref: '#/components/schemas/Scope'
+        queues:
+          type: array
+          description: Glob patterns of queue names the key may use. Empty means all queues.
+          items:
+            type: string
+          examples:
+            - ['import-*', 'mail']
+        created_at:
+          type: string
+          format: date-time
+        last_used_at:
+          type: [string, 'null']
+          format: date-time
+
+    ApiKeyCreate:
+      type: object
+      required: [name, scopes]
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 255
+        scopes:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/Scope'
+        queues:
+          type: array
+          items:
+            type: string
+          default: []
+
+    ApiKeyCreated:
+      allOf:
+        - $ref: '#/components/schemas/ApiKey'
+        - type: object
+          required: [secret]
+          properties:
+            secret:
+              type: string
+              description: The API key. Shown once.
+
+    TenantId:
+      type: string
+      pattern: '^[a-z0-9][a-z0-9-]{1,62}$'
+      description: Short, stable identifier, chosen at creation. Used in the `LessorMQ-Tenant` header and in metrics.
+      examples: [acme]
+
+    TenantStatus:
+      type: string
+      enum: [active, suspended, deleting]
+
+    Quotas:
+      type: object
+      description: Limits per tenant. `null` means unlimited. Exceeding a rate returns `429 rate_limited`.
+      properties:
+        max_queues:
+          type: [integer, 'null']
+          minimum: 1
+        max_open_messages:
+          type: [integer, 'null']
+          minimum: 1
+          description: Pending plus processing, across all queues. Publishing beyond it returns 429.
+        publish_per_second:
+          type: [integer, 'null']
+          minimum: 1
+        claim_per_second:
+          type: [integer, 'null']
+          minimum: 1
+        max_message_bytes:
+          type: [integer, 'null']
+          minimum: 1
+          description: Upper bound for every queue's `max_message_bytes` in this tenant.
+        max_retention_seconds:
+          type: [integer, 'null']
+          minimum: 0
+          description: Upper bound for every queue's retention in this tenant.
+
+    TenantUsage:
+      type: object
+      required: [queues, open_messages, failed_messages]
+      properties:
+        queues:
+          type: integer
+        open_messages:
+          type: integer
+        failed_messages:
+          type: integer
+
+    Tenant:
+      type: object
+      required: [id, name, status, quotas, queue_defaults, usage, created_at]
+      properties:
+        id:
+          $ref: '#/components/schemas/TenantId'
+        name:
+          type: string
+        status:
+          $ref: '#/components/schemas/TenantStatus'
+        quotas:
+          $ref: '#/components/schemas/Quotas'
+        queue_defaults:
+          $ref: '#/components/schemas/QueueSettings'
+        usage:
+          $ref: '#/components/schemas/TenantUsage'
+        created_at:
+          type: string
+          format: date-time
+        suspended_at:
+          type: [string, 'null']
+          format: date-time
+
+    TenantCreate:
+      type: object
+      required: [name]
+      additionalProperties: false
+      properties:
+        id:
+          $ref: '#/components/schemas/TenantId'
+        name:
+          type: string
+          minLength: 1
+          maxLength: 255
+        quotas:
+          $ref: '#/components/schemas/Quotas'
+        queue_defaults:
+          $ref: '#/components/schemas/QueueSettingsPatch'
+        create_admin_key:
+          type: boolean
+          default: true
+          description: Also create a first key with all three scopes and return it once.
+
+    TenantCreated:
+      allOf:
+        - $ref: '#/components/schemas/Tenant'
+        - type: object
+          properties:
+            admin_key:
+              oneOf:
+                - $ref: '#/components/schemas/ApiKeyCreated'
+                - type: 'null'
+
+    TenantPatch:
+      type: object
+      additionalProperties: false
+      description: |
+        Only the fields present change. `id` cannot change. `deleting` is set by
+        `deleteTenant`, never here.
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 255
+        status:
+          type: string
+          enum: [active, suspended]
+        quotas:
+          $ref: '#/components/schemas/Quotas'
+        queue_defaults:
+          $ref: '#/components/schemas/QueueSettingsPatch'
+
+    Problem:
+      type: object
+      description: RFC 9457 problem details, with a stable `code` to branch on.
+      required: [type, title, status, code]
+      properties:
+        type:
+          type: string
+          format: uri
+          description: '`urn:lessormq:problem:<code>`.'
+          examples: ['urn:lessormq:problem:lease_lost']
+        title:
+          type: string
+        status:
+          type: integer
+        detail:
+          type: string
+        code:
+          type: string
+          enum:
+            - validation_failed
+            - unauthorized
+            - forbidden
+            - tenant_suspended
+            - not_found
+            - lease_lost
+            - invalid_state
+            - payload_too_large
+            - rate_limited
+            - unavailable
+            - internal
+        errors:
+          type: array
+          description: Per-field problems, for `validation_failed`.
+          items:
+            type: object
+            required: [field, message]
+            properties:
+              field:
+                type: string
+              message:
+                type: string

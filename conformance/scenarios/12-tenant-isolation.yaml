@@ -1,0 +1,15 @@
+name: Tenants never see each other's messages
+steps:
+  - publish: {body: {secret: 1}}
+    save: m
+  - claim: {tenant: b}
+    expect: {status: 204}
+  - message: {id: $m.body.id, tenant: b}
+    expect: {status: 404, body.code: not_found}
+  - claim: {}
+    save: l
+    expect: {status: 200, body.message.id: $m.body.id}
+  - ack: {lease: $l, tenant: b}
+    expect: {status: 404}
+  - ack: {lease: $l}
+    expect: {status: 204}

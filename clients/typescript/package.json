@@ -1,0 +1,36 @@
+{
+  "name": "lessormq",
+  "version": "0.1.0",
+  "description": "TypeScript client and worker for LessorMQ, the message queue over HTTP where the server decides and clients only claim, run, ack or fail",
+  "license": "Apache-2.0",
+  "keywords": ["message-queue", "job-queue", "worker", "lessormq", "fetch"],
+  "homepage": "https://lessormq.dev",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/gsid-nl/lessorMQ.git",
+    "directory": "clients/typescript"
+  },
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": ["dist"],
+  "engines": {
+    "node": ">=20.3"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test test/*.test.ts",
+    "generate": "openapi-typescript ../../docs/openapi.yaml --default-non-nullable=false -o src/openapi.ts",
+    "prepublishOnly": "npm run typecheck && npm test && npm run build"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "openapi-typescript": "7.13.0",
+    "typescript": "5.9.3"
+  }
+}

@@ -1,0 +1,13 @@
+name: Extend keeps a long job's lease
+queues:
+  main: {lease_seconds: 2}
+steps:
+  - publish: {body: {}}
+  - claim: {}
+    save: l
+    expect: {body.lease_until: {seconds_from_now: [0, 2]}}
+  - extend: {lease: $l, lease_seconds: 30}
+    expect: {status: 200, body.lease_until: {seconds_from_now: [28, 30]}}
+  - sleep: 3
+  - ack: {lease: $l}
+    expect: {status: 204}

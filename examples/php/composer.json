@@ -1,0 +1,15 @@
+{
+    "require": {
+        "lessormq/client": "@dev",
+        "nyholm/psr7": "^1.8",
+        "symfony/http-client": "^7.3"
+    },
+    "repositories": [
+        {"type": "path", "url": "../../clients/php"}
+    ],
+    "config": {
+        "allow-plugins": {
+            "php-http/discovery": true
+        }
+    }
+}

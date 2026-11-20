@@ -1,0 +1,54 @@
+# A LessorMQ server with MariaDB and Redis, for local use and the conformance suite
+# (conformance/run.sh). Serves the working tree with PHP's built-in server, on the base
+# stage of docker/Dockerfile; not a production setup.
+services:
+  db:
+    image: mariadb:10.11
+    environment:
+      MARIADB_ROOT_PASSWORD: lessormq
+      MARIADB_DATABASE: lessormq
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 2s
+      retries: 30
+
+  redis:
+    image: redis:7.4-alpine
+
+  app:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      target: base
+    image: lessormq-dev:8.4
+    user: "${LESSORMQ_UID:-1000}:${LESSORMQ_GID:-1000}"
+    working_dir: /srv/lessormq
+    volumes:
+      - .:/srv/lessormq
+    environment:
+      # Its own environment, so the cache does not clash with one built on the host.
+      APP_ENV: compose
+      APP_DEBUG: "0"
+      DATABASE_QUEUE_URL: mysql://root:lessormq@db:3306/lessormq?serverVersion=mariadb-10.11.0&charset=utf8mb4
+      DATABASE_URL: mysql://root:lessormq@db:3306/lessormq?serverVersion=mariadb-10.11.0&charset=utf8mb4
+      REDIS_URL: redis://redis:6379
+      LEASE_SWEEP_SECONDS: ${LEASE_SWEEP_SECONDS:-60}
+      PHP_CLI_SERVER_WORKERS: "8"
+    command:
+      - sh
+      - -c
+      - >-
+        bin/console cache:clear --no-warmup &&
+        bin/console doctrine:migrations:migrate --no-interaction --allow-no-migration &&
+        exec php -d variables_order=EGPCS -S 0.0.0.0:8080 -t public
+    ports:
+      - "127.0.0.1:${LESSORMQ_PORT:-18080}:8080"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "php", "-r", "exit(@file_get_contents('http://127.0.0.1:8080/healthz') ? 0 : 1);"]
+      interval: 2s
+      retries: 60

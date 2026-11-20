@@ -1,0 +1,19 @@
+name: Publish options; delay and max_attempts
+steps:
+  - publish: {body: {}, delay_seconds: 2}
+    save: d
+    expect: {status: 201, body.available_at: {seconds_from_now: [1, 2]}}
+  - claim: {}
+    expect: {status: 204}
+  - sleep: 2.5
+  - claim: {}
+    save: l
+    expect: {status: 200, body.message.id: $d.body.id}
+  - ack: {lease: $l}
+  - publish: {body: "a plain string", max_attempts: 1}
+    save: once
+  - claim: {}
+    save: o
+    expect: {body.message.body: "a plain string", body.message.max_attempts: 1}
+  - fail: {lease: $o, error: {message: x}}
+    expect: {body.outcome: dead_lettered, body.max_attempts: 1}

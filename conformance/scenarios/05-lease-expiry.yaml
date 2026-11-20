@@ -1,0 +1,23 @@
+name: An expired lease is a failed attempt, and its receipt is no longer accepted
+queues:
+  main: {lease_seconds: 1, backoff: {initial_seconds: 0, jitter: 0}}
+steps:
+  - publish: {body: {}}
+    save: m
+  - claim: {}
+    save: l1
+    expect: {body.message.attempt: 1}
+  - sleep: 2.2
+  - ack: {lease: $l1}
+    expect: {status: 409, body.code: lease_lost}
+  - claim: {}
+    save: l2
+    expect: {status: 200, body.message.id: $m.body.id, body.message.attempt: 2}
+  - fail: {lease: $l1, error: {message: late}}
+    expect: {status: 409, body.code: lease_lost}
+  - extend: {lease: $l1}
+    expect: {status: 409, body.code: lease_lost}
+  - ack: {lease: $l2}
+    expect: {status: 204}
+  - message: {id: $m.body.id}
+    expect: {body.status: completed, body.attempts: 2, body.last_error.expired: true}

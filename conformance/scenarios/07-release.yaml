@@ -1,0 +1,20 @@
+name: Release gives a message back without counting the attempt
+steps:
+  - publish: {body: {}}
+    save: m
+  - claim: {}
+    save: l1
+  - release: {lease: $l1}
+    expect: {status: 204}
+  - release: {lease: $l1}
+    expect: {status: 409, body.code: lease_lost}
+  - claim: {}
+    save: l2
+    expect: {status: 200, body.message.id: $m.body.id, body.message.attempt: 1}
+  - release: {lease: $l2, delay_seconds: 2}
+    expect: {status: 204}
+  - claim: {}
+    expect: {status: 204}
+  - sleep: 2.5
+  - claim: {}
+    expect: {status: 200, body.message.attempt: 1}

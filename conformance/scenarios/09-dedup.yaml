@@ -1,0 +1,19 @@
+name: A dedup_key keeps one open message per key
+steps:
+  - publish: {body: {n: 1}, dedup_key: order-1}
+    save: m1
+    expect: {status: 201, body.duplicate: false}
+  - publish: {body: {n: 2}, dedup_key: order-1}
+    expect: {status: 200, body.duplicate: true, body.id: $m1.body.id}
+  - publish: {body: {n: 3}, dedup_key: Order-1}
+    expect: {status: 201, body.id: {not: $m1.body.id}}
+  - claim: {}
+    save: l
+    expect: {body.message.id: $m1.body.id}
+  - publish: {body: {n: 4}, dedup_key: order-1}
+    expect: {status: 200, body.id: $m1.body.id}
+  - ack: {lease: $l}
+  - publish: {body: {n: 5}, dedup_key: order-1}
+    expect: {status: 201, body.duplicate: false, body.id: {not: $m1.body.id}}
+  - message: {id: $m1.body.id}
+    expect: {body.dedup_key: order-1}

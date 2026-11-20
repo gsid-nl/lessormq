@@ -1,0 +1,20 @@
+# CORS for the v1 API, so a browser app on another origin can call it: the example admin
+# interface (examples/admin-ui), or your own. Requests carry an API key in the
+# Authorization header, never cookies, so credentials stay off. Nothing else is open:
+# nelmio applies the defaults to every path no entry matches, so they allow nothing.
+#
+# CORS_ALLOW_ORIGIN is a regular expression for the allowed origins. The default allows
+# http://localhost and http://127.0.0.1 on any port; set it to your admin interface's
+# origin in production, or to '^$' to allow none.
+nelmio_cors:
+    defaults:
+        allow_origin: []
+    paths:
+        '^/v1/':
+            origin_regex: true
+            allow_origin: ['%env(CORS_ALLOW_ORIGIN)%']
+            allow_credentials: false
+            allow_methods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS']
+            allow_headers: ['Authorization', 'Content-Type', 'Accept', 'LessorMQ-Tenant']
+            expose_headers: ['Retry-After', 'Deprecation', 'Link']
+            max_age: 3600

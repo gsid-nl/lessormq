@@ -1,0 +1,12 @@
+name: A paused queue takes messages but hands none out
+steps:
+  - settings: {set: {paused: true}}
+    expect: {status: 200, body.settings.paused: true, body.paused_at: {matches: 'Z$'}}
+  - publish: {body: {}}
+    expect: {status: 201}
+  - claim: {}
+    expect: {status: 204}
+  - settings: {set: {paused: false}}
+    expect: {body.settings.paused: false, body.paused_at: null}
+  - claim: {}
+    expect: {status: 200}

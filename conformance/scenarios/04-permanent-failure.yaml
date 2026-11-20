@@ -1,0 +1,17 @@
+name: A permanent failure follows the queue's on_permanent
+queues:
+  strict: {}
+  lenient: {on_permanent: retry, backoff: {initial_seconds: 0, jitter: 0}}
+steps:
+  - publish: {queue: strict, body: {}}
+  - claim: {queue: strict}
+    save: s
+  - fail: {lease: $s, error: {message: cannot decode}, permanent: true}
+    expect: {status: 200, body.outcome: dead_lettered, body.attempt: 1}
+  - publish: {queue: lenient, body: {}}
+  - claim: {queue: lenient}
+    save: l
+  - fail: {lease: $l, error: {message: cannot decode}, permanent: true}
+    expect: {status: 200, body.outcome: retrying}
+  - claim: {queue: lenient}
+    expect: {status: 200, body.message.attempt: 2}

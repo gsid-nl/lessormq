@@ -1,0 +1,120 @@
+# Tests for the server, every client, the documentation and the examples, on every push
+# and pull request. Releases are separate.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  server:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          extensions: pdo_mysql
+          tools: composer, phpcs
+      - run: composer install --no-interaction --no-progress
+      - run: phpcs --standard=PSR12 src tests
+      - run: vendor/bin/phpunit
+      - run: php docs/tools/build.php --check
+
+  conformance:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          tools: composer
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+      - run: composer install --no-interaction --no-progress
+      - name: The scenarios over plain HTTP
+        run: conformance/run.sh
+      - name: Through the PHP client
+        run: |
+          (cd clients/php && composer install --no-interaction --no-progress)
+          LESSORMQ_ADAPTER=clients/php/tests/Conformance/adapter.php conformance/run.sh
+      - name: Through the Python client
+        run: |
+          python -m venv clients/python/.venv
+          clients/python/.venv/bin/pip install -q -e 'clients/python[dev]'
+          LESSORMQ_ADAPTER_CMD="clients/python/.venv/bin/python clients/python/tests/conformance_adapter.py" conformance/run.sh
+      - name: Through the TypeScript client
+        run: |
+          (cd clients/typescript && npm ci)
+          LESSORMQ_ADAPTER_CMD="node clients/typescript/test/conformance-adapter.ts" conformance/run.sh
+      - name: Through the Go client
+        run: LESSORMQ_ADAPTER_CMD="cd clients/go && go run ./internal/conformance" conformance/run.sh
+
+  clients:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          tools: composer
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+      - name: PHP
+        run: cd clients/php && composer install --no-interaction --no-progress && vendor/bin/phpunit
+      - name: Symfony Messenger
+        run: cd clients/symfony-messenger && composer install --no-interaction --no-progress && vendor/bin/phpunit
+      - name: Python
+        run: |
+          cd clients/python
+          pip install -q -e '.[dev]'
+          pytest -q
+          mypy
+      - name: TypeScript
+        run: |
+          cd clients/typescript
+          npm ci
+          npm run typecheck
+          npm test
+          npm run generate && git diff --exit-code src/openapi.ts
+      - name: Go
+        run: |
+          cd clients/go
+          test -z "$(gofmt -l .)"
+          go vet ./...
+          go test -race ./...
+
+  examples:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          tools: composer
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+      - run: composer install --no-interaction --no-progress
+      - run: examples/test.sh

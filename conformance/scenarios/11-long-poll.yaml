@@ -1,0 +1,6 @@
+name: A claim with wait_seconds waits for work
+steps:
+  - claim: {wait_seconds: 2}
+    expect: {status: 204, elapsed: {between: [1.8, 4]}}
+  - claim: {wait_seconds: 6, publish_after: {seconds: 1, body: {late: true}}}
+    expect: {status: 200, body.message.body: {late: true}, elapsed: {between: [0.9, 4]}}

@@ -1,0 +1,45 @@
+[build-system]
+requires = ["hatchling>=1.24"]
+build-backend = "hatchling.build"
+
+[project]
+name = "lessormq"
+dynamic = ["version"]
+description = "Python client and worker for LessorMQ, the message queue over HTTP where the server decides and clients only claim, run, ack or fail"
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.10"
+dependencies = ["httpx>=0.25,<1"]
+keywords = ["message-queue", "job-queue", "worker", "lessormq", "asyncio"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Framework :: AsyncIO",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Topic :: System :: Distributed Computing",
+    "Typing :: Typed",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "pytest-asyncio>=0.23", "mypy>=1.10"]
+
+[project.urls]
+Homepage = "https://lessormq.dev"
+Documentation = "https://lessormq.dev/docs/examples"
+Source = "https://github.com/gsid-nl/lessorMQ"
+
+[tool.hatch.version]
+path = "src/lessormq/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/lessormq"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+
+[tool.mypy]
+strict = true
+files = ["src"]

@@ -1,0 +1,26 @@
+parameters:
+    # How often, at most, a queue's expired leases are ended.
+    lessormq.lease_sweep_seconds_default: 60
+    lessormq.lease_sweep_seconds: '%env(int:default:lessormq.lease_sweep_seconds_default:LEASE_SWEEP_SECONDS)%'
+
+services:
+    _defaults:
+        autowire: true
+        autoconfigure: true
+        bind:
+            int $leaseSweepSeconds: '%lessormq.lease_sweep_seconds%'
+
+    App\:
+        resource: '../src/'
+        exclude:
+            - '../src/Entity/'
+            - '../src/Kernel.php'
+
+    Predis\Client:
+        arguments:
+            # Harden against transient CoreDNS / connect blips (EAI_AGAIN).
+            # Connection params are appended to the URI as a query string so
+            # Predis applies them: short connect/RW timeouts so a blip fails
+            # fast, and persistent connections so the DNS lookup + TCP
+            # handshake is reused across requests instead of run every call.
+            - '%env(REDIS_URL)%?timeout=2&read_write_timeout=2&persistent=1'

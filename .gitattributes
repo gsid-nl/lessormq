@@ -1,0 +1,3 @@
+# Left out of the public repository (git archive, and the export to GitHub): gsid's own
+# release workflow, which deploys gsid's installation.
+/.gitea export-ignore

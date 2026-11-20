@@ -1,0 +1,16 @@
+name: Only the receipt of the current lease is accepted
+steps:
+  - publish: {body: {n: 1}}
+  - publish: {body: {n: 2}}
+  - claim: {}
+    save: a
+  - claim: {}
+    save: b
+  - ack: {lease: $a, receipt: $b.body.receipt}
+    expect: {status: 409, body.code: lease_lost}
+  - fail: {lease: $a, receipt: $b.body.receipt, error: {message: x}}
+    expect: {status: 409, body.code: lease_lost}
+  - ack: {lease: $a}
+    expect: {status: 204}
+  - ack: {lease: $b}
+    expect: {status: 204}

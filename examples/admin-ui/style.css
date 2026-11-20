@@ -1,0 +1,31 @@
+/* Deliberately plain: this example shows the API, not a design. */
+:root { color-scheme: light dark; --line: #8884; --accent: #4338ca; --bad: #b91c1c; --warn: #b45309; }
+* { box-sizing: border-box; }
+body { margin: 0; font: 14px/1.45 system-ui, sans-serif; }
+header { display: flex; flex-wrap: wrap; gap: .5rem 1.5rem; align-items: center; padding: .6rem 1rem; border-bottom: 1px solid var(--line); }
+header small { opacity: .6; }
+#who { margin-left: auto; opacity: .8; }
+nav a { margin-right: 1rem; }
+main { max-width: 72rem; margin: 0 auto; padding: 1rem; }
+a { color: var(--accent); }
+h1 { font-size: 1.3rem; margin: .2rem 0 1rem; }
+h2 { font-size: 1.05rem; margin: 1.5rem 0 .5rem; }
+table { width: 100%; border-collapse: collapse; margin-bottom: 1rem; }
+th, td { text-align: left; padding: .35rem .5rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font-size: .75rem; text-transform: uppercase; opacity: .7; }
+td.num, th.num { text-align: right; }
+form { display: flex; flex-wrap: wrap; gap: .5rem; align-items: end; margin: .5rem 0 1rem; }
+label { display: flex; flex-direction: column; font-size: .8rem; gap: .15rem; }
+input, select, textarea, button { font: inherit; padding: .3rem .5rem; }
+textarea { width: 100%; min-height: 14rem; font-family: ui-monospace, monospace; font-size: .8rem; }
+button { cursor: pointer; }
+button.danger { color: var(--bad); }
+pre { white-space: pre-wrap; word-break: break-word; font-size: .8rem; background: #8881; padding: .5rem; margin: .3rem 0; }
+code { font-family: ui-monospace, monospace; }
+.error { color: var(--bad); }
+.notice { color: #15803d; }
+.secret { border: 1px solid var(--warn); padding: .6rem; margin: .5rem 0 1rem; }
+.muted { opacity: .65; }
+.tabs { display: flex; gap: 1rem; margin-bottom: 1rem; border-bottom: 1px solid var(--line); }
+.tabs a { padding: .3rem 0; text-decoration: none; }
+.tabs a.on { font-weight: 600; border-bottom: 2px solid var(--accent); }

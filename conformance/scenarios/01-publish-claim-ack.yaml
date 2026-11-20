@@ -1,0 +1,24 @@
+name: Publish, claim and ack
+steps:
+  - publish: {body: {order: 7}, headers: {type: Order}}
+    save: m
+    expect: {status: 201, body.status: pending, body.duplicate: false}
+  - claim: {consumer: conformance}
+    save: l
+    expect:
+      status: 200
+      body.receipt: {matches: '.'}
+      body.lease_until: {seconds_from_now: [250, 301]}
+      body.message.id: $m.body.id
+      body.message.body: {order: 7}
+      body.message.headers: {type: Order}
+      body.message.attempt: 1
+      body.message.max_attempts: 7
+  - ack: {lease: $l}
+    expect: {status: 204}
+  - ack: {lease: $l}
+    expect: {status: 204}
+  - claim: {}
+    expect: {status: 204}
+  - message: {id: $m.body.id}
+    expect: {status: 200, body.status: completed, body.attempts: 1, body.completed_at: {matches: 'Z$'}}

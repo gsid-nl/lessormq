@@ -1,0 +1,25 @@
+name: The last failed attempt dead-letters the message; replay starts it over
+queues:
+  main: {max_attempts: 2, backoff: {initial_seconds: 0, jitter: 0}}
+steps:
+  - publish: {body: {}}
+    save: m
+  - claim: {}
+    save: l1
+  - fail: {lease: $l1, error: {message: first}}
+    expect: {body.outcome: retrying}
+  - claim: {}
+    save: l2
+    expect: {body.message.attempt: 2}
+  - fail: {lease: $l2, error: {type: Broken, message: second}}
+    expect: {status: 200, body.outcome: dead_lettered, body.attempt: 2, body.available_at: null}
+  - fail: {lease: $l2, error: {message: second}}
+    expect: {status: 200, body.outcome: dead_lettered}
+  - claim: {}
+    expect: {status: 204}
+  - message: {id: $m.body.id}
+    expect: {body.status: failed, body.attempts: 2, body.last_error.type: Broken, body.failed_at: {matches: 'Z$'}}
+  - replay: {id: $m.body.id}
+    expect: {status: 200, body.status: pending, body.attempts: 0, body.last_error: null}
+  - claim: {}
+    expect: {status: 200, body.message.id: $m.body.id, body.message.attempt: 1}

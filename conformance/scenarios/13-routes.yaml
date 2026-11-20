@@ -1,0 +1,21 @@
+name: A message is kept away from routes it failed on
+queues:
+  main: {route_policy: {mode: avoid_failed, cooldown_seconds: 60}, backoff: {initial_seconds: 0, jitter: 0}}
+steps:
+  - publish: {body: {}}
+    save: m
+  - claim: {route: proxy-1}
+    save: l1
+  - fail: {lease: $l1, error: {message: blocked}}
+  - claim: {route: proxy-1}
+    expect: {status: 204}
+  - claim: {route: proxy-2}
+    save: l2
+    expect: {status: 200, body.message.id: $m.body.id, body.message.attempt: 2}
+  - fail: {lease: $l2, error: {message: blocked}}
+  - claim: {route: proxy-2}
+    expect: {status: 204}
+  - message: {id: $m.body.id}
+    expect: {body.failed_routes: {keys: [proxy-1, proxy-2]}, body.last_error.route: proxy-2}
+  - claim: {route: proxy-3}
+    expect: {status: 200, body.message.attempt: 3}

@@ -1,0 +1,30 @@
+name: A failed attempt comes back after the queue's backoff
+queues:
+  main: {max_attempts: 3, backoff: {initial_seconds: 2, multiplier: 1, jitter: 0}}
+steps:
+  - publish: {body: {}}
+    save: m
+  - claim: {}
+    save: l1
+  - fail: {lease: $l1, error: {type: Timeout, message: upstream slow, details: {ms: 3000}}}
+    expect:
+      status: 200
+      body.outcome: retrying
+      body.attempt: 1
+      body.max_attempts: 3
+      body.available_at: {seconds_from_now: [0, 3]}
+  - fail: {lease: $l1, error: {type: Timeout, message: upstream slow}}
+    expect: {status: 200, body.outcome: retrying}
+  - claim: {}
+    expect: {status: 204}
+  - sleep: 2.5
+  - claim: {}
+    save: l2
+    expect: {status: 200, body.message.id: $m.body.id, body.message.attempt: 2}
+  - message: {id: $m.body.id}
+    expect:
+      body.status: processing
+      body.attempts: 2
+      body.last_error.type: Timeout
+      body.last_error.attempt: 1
+      body.last_error.details: {ms: 3000}
