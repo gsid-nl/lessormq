@@ -96,6 +96,10 @@ final class Expect
                     return is_string($actual) && preg_match('/' . $argument . '/', $actual) === 1
                         ? null
                         : sprintf('expected to match /%s/, got %s', $argument, self::show($actual));
+                case 'not_matches':
+                    return is_string($actual) && preg_match('/' . $argument . '/', $actual) === 0
+                        ? null
+                        : sprintf('expected not to match /%s/, got %s', $argument, self::show($actual));
                 case 'keys':
                     $keys = is_array($actual) ? array_map('strval', array_keys($actual)) : null;
                     $want = array_map('strval', $argument);

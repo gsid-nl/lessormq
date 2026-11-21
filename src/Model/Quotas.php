@@ -6,7 +6,12 @@ namespace App\Model;
 
 /**
  * Limits per tenant, set by the operator. A missing or null value means unlimited.
- * Stored and returned here; enforcement is a separate piece of work.
+ *
+ * - max_queues: a new queue beyond it is refused (403 quota_exceeded).
+ * - max_open_messages: pending plus processing; a publish beyond it waits (429).
+ * - publish_per_second, claim_per_second: rates (429 with Retry-After).
+ * - max_message_bytes, max_retention_seconds: caps on every queue's own setting; a queue
+ *   setting above them is refused, and one set before the cap came is held to it.
  */
 final class Quotas
 {
@@ -37,6 +42,67 @@ final class Quotas
         }
 
         return $quotas;
+    }
+
+    /**
+     * Queue settings as the tenant's quotas allow them: max_message_bytes and the
+     * retention held to their caps.
+     *
+     * @param array<string, mixed>    $settings resolved queue settings
+     * @param array<string, int|null> $quotas   resolved quotas
+     * @return array<string, mixed>
+     */
+    public static function cap(array $settings, array $quotas): array
+    {
+        if (($quotas['max_message_bytes'] ?? null) !== null) {
+            $settings['max_message_bytes'] = min((int) $settings['max_message_bytes'], $quotas['max_message_bytes']);
+        }
+
+        if (($quotas['max_retention_seconds'] ?? null) !== null) {
+            foreach (['completed_seconds', 'failed_seconds'] as $field) {
+                $settings['retention'][$field] = min(
+                    (int) $settings['retention'][$field],
+                    $quotas['max_retention_seconds'],
+                );
+            }
+        }
+
+        return $settings;
+    }
+
+    /**
+     * The fields of a settings patch (a queue's, or a tenant's queue defaults) that go
+     * beyond the tenant's quotas.
+     *
+     * @param array<string, mixed>    $patch
+     * @param array<string, int|null> $quotas resolved quotas
+     * @return list<array{field: string, message: string}>
+     */
+    public static function settingErrors(array $patch, array $quotas, string $prefix = ''): array
+    {
+        $errors = [];
+        $bytes = $quotas['max_message_bytes'] ?? null;
+        $retention = $quotas['max_retention_seconds'] ?? null;
+
+        if ($bytes !== null && is_int($patch['max_message_bytes'] ?? null) && $patch['max_message_bytes'] > $bytes) {
+            $errors[] = [
+                'field' => $prefix . 'max_message_bytes',
+                'message' => 'must be at most the tenant\'s quota of ' . $bytes,
+            ];
+        }
+
+        foreach (['completed_seconds', 'failed_seconds'] as $field) {
+            $value = is_array($patch['retention'] ?? null) ? ($patch['retention'][$field] ?? null) : null;
+
+            if ($retention !== null && is_int($value) && $value > $retention) {
+                $errors[] = [
+                    'field' => $prefix . 'retention.' . $field,
+                    'message' => 'must be at most the tenant\'s quota of ' . $retention,
+                ];
+            }
+        }
+
+        return $errors;
     }
 
     /**

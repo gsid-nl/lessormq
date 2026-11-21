@@ -38,6 +38,7 @@ A key has scopes:
 |-----------|-----------------------------------------------------------------------|
 | `publish` | publishing messages                                                   |
 | `consume` | claiming, extending, acking, failing, releasing; reading queue stats  |
+| `metrics` | reading queue stats and the Prometheus metrics; nothing else          |
 | `admin`   | everything, including queue settings, the dead-letter set and keys    |
 
 A key can also be limited to queue name patterns, such as `import-*`.
@@ -158,10 +159,10 @@ end a lease safe to repeat:
 ## Long polling
 
 A claim with `wait_seconds` (at most 20) waits for a message instead of returning 204 at
-once. A worker loop that claims with a wait needs no sleep of its own. For now the server
-checks for work once a second while it waits, so a new message is picked up within a
-second; a wake-up on publish will bring that down to milliseconds. A paused queue behaves
-as an empty one, so workers simply wait out the pause.
+once. A worker loop that claims with a wait needs no sleep of its own. A waiting claim is
+woken by a publish, retry, release or replay on its queue and takes the message within
+milliseconds; a delayed message is taken as soon as it is due. A paused queue behaves as
+an empty one, so workers simply wait out the pause; a resume wakes them.
 
 ## Errors
 
@@ -176,8 +177,9 @@ Every error is `application/problem+json` with a stable `code`:
 | `not_found`         | 404    | no such queue or message for this tenant                       |
 | `lease_lost`        | 409    | the receipt is not the current lease; stop reporting           |
 | `invalid_state`     | 409    | the message is not in a state that allows this                 |
+| `quota_exceeded`    | 403    | a tenant quota that waiting does not lift, such as `max_queues` |
 | `payload_too_large` | 413    | body and headers exceed the queue's `max_message_bytes`        |
-| `rate_limited`      | 429    | tenant quota or rate limit; wait `Retry-After` seconds         |
+| `rate_limited`      | 429    | tenant rate limit or open-message quota; wait `Retry-After` s  |
 | `unavailable`       | 503    | database or Redis unreachable; retry later                     |
 | `internal`          | 500    | a server fault                                                 |
 
@@ -196,6 +198,10 @@ A conforming client:
    receipt, and of publish only with a `dedup_key`;
 9. waits `Retry-After` on 429;
 10. never decides on its own to retry, delay or drop a message.
+
+A worker names itself with `consumer` on every claim; the official libraries send
+host:pid unless told otherwise, so the workers of one host are told apart in a queue's
+list of workers (`GET /v1/queues/{queue}/workers`).
 
 Options a client library may expose: `consumer`, `route`, `wait_seconds`,
 `lease_seconds`, the extend interval, HTTP timeouts and the number of HTTP retries, and

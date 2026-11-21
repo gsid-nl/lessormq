@@ -39,7 +39,7 @@ ack with curl.
 
 | | |
 |---|---|
-| `src/`, `config/`, `migrations/` | the server: PHP 8.4, Symfony, MariaDB, Redis |
+| `src/`, `config/`, `migrations/` | the server: PHP 8.4, Symfony, Redis, and MariaDB, MySQL, PostgreSQL or SQLite |
 | `docs/` | the documentation, and `openapi.yaml`, the API |
 | `clients/` | libraries for [PHP](clients/php), [Symfony Messenger](clients/symfony-messenger), [Python](clients/python), [TypeScript](clients/typescript) and [Go](clients/go) |
 | `conformance/` | scenarios every client must pass, as data, with a runner |

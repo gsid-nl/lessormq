@@ -4,17 +4,19 @@ declare(strict_types=1);
 
 namespace App\Repository;
 
+use App\Database\Dialect;
+use App\Doctrine\OrderedTimeUuidType;
 use App\Entity\Enum\MessageStatus;
 use App\Entity\Message;
 use App\Exception\DuplicateOpenMessageException;
 use App\Time\Utc;
-use DateTime;
 use DateTimeInterface;
 use Doctrine\Bundle\DoctrineBundle\Repository\ServiceEntityRepository;
+use Doctrine\DBAL\ArrayParameterType;
 use Doctrine\DBAL\Connection;
 use Doctrine\DBAL\Exception\UniqueConstraintViolationException;
+use Doctrine\DBAL\ParameterType;
 use Doctrine\DBAL\Types\Type;
-use Doctrine\ORM\QueryBuilder;
 use Doctrine\Persistence\ManagerRegistry;
 use Ramsey\Uuid\Rfc4122\FieldsInterface;
 use Ramsey\Uuid\Uuid;
@@ -27,9 +29,6 @@ class MessageRepository extends ServiceEntityRepository
 {
     use DeadlockRetryTrait;
 
-    /** The error type of a message's last failure. */
-    private const ERROR_TYPE = "JSON_VALUE(error_details, '$.type')";
-
     private const REPLAY_ASSIGNMENTS = <<<'SQL'
         status = :pending, retry_count = 0, processing_after = NULL, processing_started_at = NULL,
         processed_at = NULL, failed_at = NULL, consumed_by = NULL, receipt = NULL, lease_until = NULL,
@@ -37,9 +36,17 @@ class MessageRepository extends ServiceEntityRepository
         dedup_open = dedup_key
         SQL;
 
-    public function __construct(private readonly ManagerRegistry $managerRegistry)
-    {
+    public function __construct(
+        private readonly ManagerRegistry $managerRegistry,
+        private readonly Dialect $dialect,
+    ) {
         parent::__construct($managerRegistry, Message::class);
+    }
+
+    /** The error type of a message's last failure. */
+    private function errorType(): string
+    {
+        return $this->dialect->jsonValue('error_details', 'type');
     }
 
     public function add(Message $entity, bool $flush = false): void
@@ -81,6 +88,9 @@ class MessageRepository extends ServiceEntityRepository
      * taking, and SKIP LOCKED makes a worker walk past a row another worker already
      * holds instead of queueing behind it. Both statements touch a single row in
      * primary key order, which leaves no cycle to detect.
+     *
+     * PostgreSQL does the same. SQLite has no row locks and one writer at a time, so there
+     * step 2 is a single UPDATE of the first claimable row, RETURNING its id.
      */
     public function claimNextMessage(
         string $tenant,
@@ -107,8 +117,8 @@ class MessageRepository extends ServiceEntityRepository
         // name one.
         if ($route !== null && $avoidRouteSeconds !== null) {
             $routeCondition = 'AND (failed_routes IS NULL'
-                . " OR COALESCE(JSON_VALUE(failed_routes, :route_path), '0') < :avoid_before)";
-            $selectParams['route_path'] = \App\Model\Route::path($route);
+                . " OR COALESCE({$this->dialect->jsonMember('failed_routes', ':route_path')}, '0') < :avoid_before)";
+            $selectParams['route_path'] = $this->dialect->jsonMemberArgument($route);
             $selectParams['avoid_before'] = Utc::sql((clone $nowTime)->modify('-' . $avoidRouteSeconds . ' seconds'));
         }
 
@@ -134,7 +144,7 @@ class MessageRepository extends ServiceEntityRepository
             return null;
         }
 
-        $selectSql = $candidateSql . "\nFOR UPDATE SKIP LOCKED";
+        $selectSql = $candidateSql . $this->dialect->skipLocked();
 
         $updateSql = <<<SQL
             UPDATE messages
@@ -160,9 +170,9 @@ class MessageRepository extends ServiceEntityRepository
 
         // Retained as a backstop only: a deadlocked claim rolled back without taking a
         // row, so re-running it is the same operation rather than a duplicate claim.
-        $claimedId = $this->retryOnDeadlock(
-            fn() => $this->claimOneRow($conn, $selectSql, $selectParams, $updateSql, $updateParams)
-        );
+        $claimedId = $this->retryOnDeadlock(fn() => $this->dialect->claimsInOneStatement()
+            ? $this->claimInOneStatement($conn, $candidateSql, $selectParams, $updateSql, $updateParams)
+            : $this->claimOneRow($conn, $selectSql, $selectParams, $updateSql, $updateParams));
 
         if ($claimedId === null) {
             return null;
@@ -190,7 +200,7 @@ class MessageRepository extends ServiceEntityRepository
     ): ?string {
         // Scoped to the next transaction only, so the connection keeps its configured
         // isolation level afterwards. fpm workers hold their connection across requests.
-        $conn->executeStatement('SET TRANSACTION ISOLATION LEVEL READ COMMITTED');
+        $this->dialect->readCommitted($conn);
         $conn->beginTransaction();
 
         try {
@@ -202,7 +212,12 @@ class MessageRepository extends ServiceEntityRepository
                 return null;
             }
 
-            $affected = $conn->executeStatement($updateSql, $updateParams + ['id' => $id]);
+            $id = OrderedTimeUuidType::bytes($id);
+            $affected = $conn->executeStatement(
+                $updateSql,
+                $updateParams + ['id' => $id],
+                ['id' => ParameterType::BINARY],
+            );
             $conn->commit();
 
             return $affected > 0 ? $id : null;
@@ -213,6 +228,24 @@ class MessageRepository extends ServiceEntityRepository
 
             throw $e;
         }
+    }
+
+    /**
+     * The claim as one statement: the first claimable row, chosen and taken by one UPDATE.
+     * For SQLite, whose single writer makes a statement atomic and which has no row locks
+     * to skip; a read in a transaction that then writes could not wait for the writer.
+     */
+    private function claimInOneStatement(
+        Connection $conn,
+        string $candidateSql,
+        array $selectParams,
+        string $updateSql,
+        array $updateParams,
+    ): ?string {
+        $sql = str_replace('WHERE id = :id', "WHERE id = ({$candidateSql})", $updateSql) . ' RETURNING id';
+        $id = $conn->fetchOne($sql, $updateParams + $selectParams);
+
+        return $id === false ? null : OrderedTimeUuidType::bytes($id);
     }
 
     /**
@@ -308,101 +341,6 @@ class MessageRepository extends ServiceEntityRepository
     }
 
     /**
-     * Per-queue health of the work still open, for the /metrics endpoint.
-     *
-     * Only pending and processing rows are read, which idx_purge (status,
-     * updated_at) turns into a range over the open set rather than a scan of
-     * every completed row kept until the purge.
-     *
-     * A pending message is "ready" once its processing_after has passed (or it
-     * has none) and "delayed" before that. oldest_ready is when the oldest ready
-     * message became available to a worker.
-     *
-     * Timestamps come back as stored, in UTC. $now is passed in so the caller's
-     * clock decides the ageing, not the database's.
-     *
-     * @return list<array{
-     *     tenant: string,
-     *     queue: string,
-     *     ready: int,
-     *     delayed: int,
-     *     processing: int,
-     *     oldest_ready: ?string,
-     *     oldest_processing: ?string,
-     *     max_retry: int
-     * }>
-     */
-    public function getOpenMessageHealth(DateTimeInterface $now): array
-    {
-        $sql = <<<'SQL'
-            SELECT tenant_id, queue,
-                   SUM(status = :pending AND (processing_after IS NULL OR processing_after <= :now)) AS ready,
-                   SUM(status = :pending AND processing_after > :now) AS delayed_count,
-                   SUM(status = :processing) AS processing,
-                   MIN(CASE WHEN status = :pending AND (processing_after IS NULL OR processing_after <= :now)
-                       THEN COALESCE(processing_after, created_at) END) AS oldest_ready,
-                   MIN(CASE WHEN status = :processing THEN processing_started_at END) AS oldest_processing,
-                   MAX(retry_count) AS max_retry
-            FROM messages
-            WHERE status IN (:pending, :processing)
-            GROUP BY tenant_id, queue
-            ORDER BY tenant_id, queue
-            SQL;
-
-        $rows = $this->getEntityManager()->getConnection()->fetchAllAssociative($sql, [
-            'pending' => MessageStatus::PENDING->value,
-            'processing' => MessageStatus::PROCESSING->value,
-            'now' => Utc::sql($now),
-        ]);
-
-        return array_map(static fn (array $row): array => [
-            'tenant' => (string) $row['tenant_id'],
-            'queue' => (string) $row['queue'],
-            'ready' => (int) $row['ready'],
-            'delayed' => (int) $row['delayed_count'],
-            'processing' => (int) $row['processing'],
-            'oldest_ready' => $row['oldest_ready'] !== null ? (string) $row['oldest_ready'] : null,
-            'oldest_processing' => $row['oldest_processing'] !== null ? (string) $row['oldest_processing'] : null,
-            'max_retry' => (int) $row['max_retry'],
-        ], $rows);
-    }
-
-    /**
-     * @return array{0: string, 1: array<string, mixed>, 2: array<string, int>}
-     */
-    private function buildMessageWhere(string $tenant, string $queue, array $parameters): array
-    {
-        $clauses = ['tenant_id = :tenant', 'queue = :queue'];
-        $params = ['tenant' => $tenant, 'queue' => $queue];
-        $types = [];
-
-        if (!empty($parameters['status'])) {
-            $clauses[] = 'status = :status';
-            $params['status'] = $parameters['status'];
-        }
-
-        $search = isset($parameters['search']) ? trim((string) $parameters['search']) : '';
-        if ($search !== '') {
-            $params['bodySearch'] = '%' . $search . '%';
-
-            if ($this->isMessageId($search)) {
-                // The key is stored ordered-time encoded (time_hi, time_mid, time_low, rest),
-                // so the hex of a whole pasted UUID never occurs in HEX(id); match the key
-                // itself. The body still counts: it often carries the id of a file object.
-                $clauses[] = '(id = :idSearch OR body LIKE :bodySearch)';
-                $params['idSearch'] = $search;
-                $types['idSearch'] = 'uuid_binary_ordered_time';
-            } else {
-                $idNeedle = strtolower(str_replace('-', '', $search));
-                $clauses[] = '(LOWER(HEX(id)) LIKE :idSearch OR body LIKE :bodySearch)';
-                $params['idSearch'] = '%' . $idNeedle . '%';
-            }
-        }
-
-        return [implode(' AND ', $clauses), $params, $types];
-    }
-
-    /**
      * Message ids are v1 UUIDs; the ordered-time type cannot encode any other version.
      */
     private function isMessageId(string $value): bool
@@ -414,49 +352,6 @@ class MessageRepository extends ServiceEntityRepository
         $fields = Uuid::fromString($value)->getFields();
 
         return $fields instanceof FieldsInterface && $fields->getVersion() === 1;
-    }
-
-    private function buildMessageOrderSql(array $parameters): string
-    {
-        // created_at maps onto the ordered-time UUID primary key: same order, no filesort.
-        $allowed = [
-            'id' => 'id',
-            'status' => 'status',
-            'updated_at' => 'updated_at',
-            'created_at' => 'id',
-        ];
-
-        $sortBy = $parameters['sortBy'] ?? null;
-        if (is_string($sortBy)) {
-            $sortBy = json_decode($sortBy, true);
-        }
-
-        if (is_array($sortBy) && !empty($sortBy)) {
-            $parts = [];
-            foreach ($sortBy as $sort) {
-                if (!is_array($sort) || empty($sort['key']) || !isset($allowed[$sort['key']])) {
-                    continue;
-                }
-                $direction = strtoupper((string) ($sort['order'] ?? 'ASC')) === 'DESC' ? 'DESC' : 'ASC';
-                $parts[] = $allowed[$sort['key']] . ' ' . $direction;
-            }
-            if (!empty($parts)) {
-                return implode(', ', $parts);
-            }
-        }
-
-        return 'id DESC';
-    }
-
-    private function resolveLimit(array $parameters): int
-    {
-        $raw = $parameters['limit'] ?? $parameters['itemsPerPage'] ?? 20;
-        $limit = (int) $raw;
-        if ($limit <= 0) {
-            return 20;
-        }
-
-        return min(100, $limit);
     }
 
     /**
@@ -471,38 +366,50 @@ class MessageRepository extends ServiceEntityRepository
     }
 
     /**
+     * A tenant's open and dead-letter messages over its queues. Only those rows are read,
+     * through ranges of (tenant_id, queue, status): the finished messages, which are most
+     * of them, are not touched.
+     *
+     * @param list<string> $queues the tenant's queues
      * @return array{queues: int, open_messages: int, failed_messages: int}
      */
-    public function tenantUsage(string $tenant): array
+    public function tenantUsage(string $tenant, array $queues): array
     {
-        // An index-only scan of the tenant's part of idx_tenant_claim.
-        $row = $this->getEntityManager()->getConnection()->fetchAssociative(
+        $usage = ['queues' => count($queues), 'open_messages' => 0, 'failed_messages' => 0];
+
+        if ($queues === []) {
+            return $usage;
+        }
+
+        $rows = $this->getEntityManager()->getConnection()->fetchAllAssociative(
             <<<'SQL'
-                SELECT COUNT(DISTINCT queue) AS queues,
-                       COALESCE(SUM(status IN (:pending, :processing)), 0) AS open_messages,
-                       COALESCE(SUM(status = :failed), 0) AS failed_messages
+                SELECT status, COUNT(*) AS n
                 FROM messages
-                WHERE tenant_id = :tenant
+                WHERE tenant_id = :tenant AND queue IN (:queues) AND status IN (:pending, :processing, :failed)
+                GROUP BY status
                 SQL,
             [
                 'tenant' => $tenant,
+                'queues' => $queues,
                 'pending' => MessageStatus::PENDING->value,
                 'processing' => MessageStatus::PROCESSING->value,
                 'failed' => MessageStatus::FAILED->value,
             ],
+            ['queues' => ArrayParameterType::STRING],
         );
 
-        return [
-            'queues' => (int) $row['queues'],
-            'open_messages' => (int) $row['open_messages'],
-            'failed_messages' => (int) $row['failed_messages'],
-        ];
+        foreach ($rows as $row) {
+            $field = $row['status'] === MessageStatus::FAILED->value ? 'failed_messages' : 'open_messages';
+            $usage[$field] += (int) $row['n'];
+        }
+
+        return $usage;
     }
 
     public function deleteTenantBatch(string $tenant, int $limit): int
     {
         return (int) $this->getEntityManager()->getConnection()->executeStatement(
-            'DELETE FROM messages WHERE tenant_id = :tenant LIMIT :limit',
+            $this->dialect->deleteMessages('tenant_id = :tenant'),
             ['tenant' => $tenant, 'limit' => $limit],
             ['limit' => \Doctrine\DBAL\ParameterType::INTEGER],
         );
@@ -568,14 +475,9 @@ class MessageRepository extends ServiceEntityRepository
     public function purgeBatch(string $tenant, string $queue, MessageStatus $status, string $before, int $limit): int
     {
         return (int) $this->getEntityManager()->getConnection()->executeStatement(
-            <<<'SQL'
-                DELETE FROM messages
-                WHERE tenant_id = :tenant
-                  AND queue = :queue
-                  AND status = :status
-                  AND updated_at < :before
-                LIMIT :limit
-                SQL,
+            $this->dialect->deleteMessages(
+                'tenant_id = :tenant AND queue = :queue AND status = :status AND updated_at < :before',
+            ),
             [
                 'tenant' => $tenant,
                 'queue' => $queue,
@@ -588,31 +490,27 @@ class MessageRepository extends ServiceEntityRepository
     }
 
     /**
-     * Statistics per queue of a tenant (QueueStats in the spec). Counts per status come
-     * from the index alone; the ages only read the open rows.
+     * Statistics per queue of a tenant (QueueStats in the spec), all but the number of
+     * completed messages (completedCount(); QueueStatsService caches it). Only open and
+     * dead-letter rows are read, through ranges of (tenant_id, queue, status): the
+     * completed messages, which are most of them, are not touched.
      *
-     * @param list<string>|null $queues null for every queue of the tenant
+     * @param list<string> $queues
      * @return array<string, array{
      *     ready: int, delayed: int, processing: int, completed: int, failed: int,
-     *     oldest_ready_seconds: int, oldest_processing_seconds: int
-     * }>
+     *     oldest_ready_seconds: int, oldest_processing_seconds: int, max_retry: int
+     * }> completed is 0
      */
-    public function queueStats(string $tenant, ?array $queues, \DateTimeInterface $now): array
+    public function queueStats(string $tenant, array $queues, \DateTimeInterface $now): array
     {
-        $conn = $this->getEntityManager()->getConnection();
-        $filter = '';
-        $params = ['tenant' => $tenant];
-        $types = [];
-
-        if ($queues !== null) {
-            if ($queues === []) {
-                return [];
-            }
-
-            $filter = 'AND queue IN (:queues)';
-            $params['queues'] = $queues;
-            $types['queues'] = \Doctrine\DBAL\ArrayParameterType::STRING;
+        if ($queues === []) {
+            return [];
         }
+
+        $conn = $this->getEntityManager()->getConnection();
+        $filter = 'AND queue IN (:queues)';
+        $params = ['tenant' => $tenant, 'queues' => $queues];
+        $types = ['queues' => ArrayParameterType::STRING];
 
         $empty = [
             'ready' => 0,
@@ -622,39 +520,38 @@ class MessageRepository extends ServiceEntityRepository
             'failed' => 0,
             'oldest_ready_seconds' => 0,
             'oldest_processing_seconds' => 0,
+            'max_retry' => 0,
         ];
         $stats = [];
 
-        foreach ($queues ?? [] as $queue) {
+        foreach ($queues as $queue) {
             $stats[$queue] = $empty;
         }
 
-        $counts = $conn->fetchAllAssociative(
-            "SELECT queue, status, COUNT(*) AS n FROM messages
-             WHERE tenant_id = :tenant {$filter}
-             GROUP BY queue, status",
+        $failed = $conn->fetchAllAssociative(
+            "SELECT queue, COUNT(*) AS n FROM messages
+             WHERE tenant_id = :tenant {$filter} AND status = 'failed'
+             GROUP BY queue",
             $params,
             $types,
         );
 
-        foreach ($counts as $row) {
-            $stats[$row['queue']] ??= $empty;
-
-            if (in_array($row['status'], [MessageStatus::COMPLETED->value, MessageStatus::FAILED->value], true)) {
-                $stats[$row['queue']][$row['status']] = (int) $row['n'];
-            }
+        foreach ($failed as $row) {
+            $stats[$row['queue']]['failed'] = (int) $row['n'];
         }
 
         $nowSql = Utc::sql($now);
         $open = $conn->fetchAllAssociative(
             <<<SQL
                 SELECT queue,
-                       SUM(status = 'pending' AND (processing_after IS NULL OR processing_after <= :now)) AS ready,
-                       SUM(status = 'pending' AND processing_after > :now) AS delayed_count,
-                       SUM(status = 'processing') AS processing,
+                       SUM(CASE WHEN status = 'pending' AND (processing_after IS NULL OR processing_after <= :now)
+                           THEN 1 ELSE 0 END) AS ready,
+                       SUM(CASE WHEN status = 'pending' AND processing_after > :now THEN 1 ELSE 0 END) AS delayed_count,
+                       SUM(CASE WHEN status = 'processing' THEN 1 ELSE 0 END) AS processing,
                        MIN(CASE WHEN status = 'pending' AND (processing_after IS NULL OR processing_after <= :now)
                            THEN COALESCE(processing_after, created_at) END) AS oldest_ready,
-                       MIN(CASE WHEN status = 'processing' THEN processing_started_at END) AS oldest_processing
+                       MIN(CASE WHEN status = 'processing' THEN processing_started_at END) AS oldest_processing,
+                       MAX(retry_count) AS max_retry
                 FROM messages
                 WHERE tenant_id = :tenant {$filter}
                   AND status IN ('pending', 'processing')
@@ -669,17 +566,82 @@ class MessageRepository extends ServiceEntityRepository
             : max(0, $now->getTimestamp() - Utc::parse($time)->getTimestamp());
 
         foreach ($open as $row) {
-            $stats[$row['queue']] ??= $empty;
             $stats[$row['queue']]['ready'] = (int) $row['ready'];
             $stats[$row['queue']]['delayed'] = (int) $row['delayed_count'];
             $stats[$row['queue']]['processing'] = (int) $row['processing'];
             $stats[$row['queue']]['oldest_ready_seconds'] = $age($row['oldest_ready']);
             $stats[$row['queue']]['oldest_processing_seconds'] = $age($row['oldest_processing']);
+            $stats[$row['queue']]['max_retry'] = (int) $row['max_retry'];
         }
 
         ksort($stats);
 
         return $stats;
+    }
+
+    /**
+     * Which consumers hold messages of these queues now, and how many: the processing
+     * rows of the queues, through idx_tenant_claim. A message claimed without a consumer
+     * name counts under WorkerRegistry::name('').
+     *
+     * @param list<string> $queues
+     * @return array<string, array<string, int>> queue => consumer => messages
+     */
+    public function processingByConsumer(string $tenant, array $queues): array
+    {
+        $holding = array_fill_keys($queues, []);
+
+        if ($queues === []) {
+            return $holding;
+        }
+
+        $rows = $this->getEntityManager()->getConnection()->fetchAllAssociative(
+            <<<'SQL'
+                SELECT queue, consumed_by, COUNT(*) AS n FROM messages
+                WHERE tenant_id = :tenant AND queue IN (:queues) AND status = 'processing'
+                GROUP BY queue, consumed_by
+                SQL,
+            ['tenant' => $tenant, 'queues' => $queues],
+            ['queues' => ArrayParameterType::STRING],
+        );
+
+        foreach ($rows as $row) {
+            $name = \App\Service\WorkerRegistry::name((string) $row['consumed_by']);
+            $holding[$row['queue']][$name] = ($holding[$row['queue']][$name] ?? 0) + (int) $row['n'];
+        }
+
+        return $holding;
+    }
+
+    /**
+     * When the next pending message of a queue that is not ready yet will be (a retry
+     * after its backoff, a delayed publish), or null when none is waiting for a time: what
+     * a waiting claim wakes up for when nothing announces it. Reads the queue's pending
+     * part of idx_tenant_claim, which holds processing_after.
+     */
+    public function nextAvailableAt(string $tenant, string $queue, \DateTimeInterface $now): ?\DateTimeImmutable
+    {
+        $next = $this->getEntityManager()->getConnection()->fetchOne(
+            <<<'SQL'
+                SELECT MIN(processing_after) FROM messages
+                WHERE tenant_id = :tenant AND queue = :queue AND status = 'pending' AND processing_after > :now
+                SQL,
+            ['tenant' => $tenant, 'queue' => $queue, 'now' => Utc::sql($now)],
+        );
+
+        return is_string($next) ? Utc::parse($next) : null;
+    }
+
+    /**
+     * The completed messages of one queue: a count over the queue's completed range of the
+     * index, so it takes time in proportion to their number (about 10 ms per 50,000).
+     */
+    public function completedCount(string $tenant, string $queue): int
+    {
+        return (int) $this->getEntityManager()->getConnection()->fetchOne(
+            "SELECT COUNT(*) FROM messages WHERE tenant_id = :tenant AND queue = :queue AND status = 'completed'",
+            ['tenant' => $tenant, 'queue' => $queue],
+        );
     }
 
     /**
@@ -767,7 +729,7 @@ class MessageRepository extends ServiceEntityRepository
         ];
 
         if ($errorType !== null) {
-            $where .= ' AND ' . self::ERROR_TYPE . ' = :error_type';
+            $where .= ' AND ' . $this->errorType() . ' = :error_type';
             $params['error_type'] = $errorType;
         }
 
@@ -776,24 +738,72 @@ class MessageRepository extends ServiceEntityRepository
             $params['before'] = Utc::sql($before);
         }
 
+        if ($action === 'replay' && !$this->dialect->replaysInOneStatement()) {
+            return $this->replayEach($conn, $where, $params);
+        }
+
         if ($action === 'replay') {
             // IGNORE: a row whose dedup_key an open message already holds stays where it is.
             $sql = 'UPDATE IGNORE messages SET ' . self::REPLAY_ASSIGNMENTS
                 . " WHERE {$where} ORDER BY id LIMIT :limit";
             $params += ['now' => Utc::sql(Utc::now()), 'pending' => MessageStatus::PENDING->value];
         } else {
-            $sql = "DELETE FROM messages WHERE {$where} ORDER BY id LIMIT :limit";
+            $sql = $this->dialect->deleteMessages($where, 'id');
         }
 
         return $this->retryOnDeadlock(function () use ($conn, $sql, $params): int {
-            $conn->executeStatement('SET TRANSACTION ISOLATION LEVEL READ COMMITTED');
+            $this->dialect->readCommitted($conn);
 
-            return (int) $conn->executeStatement($sql, $params, ['limit' => \Doctrine\DBAL\ParameterType::INTEGER]);
+            return (int) $conn->executeStatement($sql, $params, ['limit' => ParameterType::INTEGER]);
         });
     }
 
     /**
+     * A bulk replay one message at a time, oldest first, where no UPDATE can skip the
+     * rows that would break uniq_open_dedup: a message whose dedup_key an open message
+     * already holds (or one replayed just before it) stays where it is.
+     *
+     * @param array<string, mixed> $params
+     */
+    private function replayEach(Connection $conn, string $where, array $params): int
+    {
+        $ids = $conn->fetchFirstColumn(
+            "SELECT id FROM messages WHERE {$where} ORDER BY id LIMIT :limit",
+            $params,
+            ['limit' => ParameterType::INTEGER],
+        );
+        $now = Utc::sql(Utc::now());
+        $replayed = 0;
+
+        foreach ($ids as $id) {
+            try {
+                $replayed += $this->retryOnDeadlock(fn() => $conn->executeStatement(
+                    'UPDATE messages SET ' . self::REPLAY_ASSIGNMENTS . ' WHERE id = :id AND status = :status',
+                    [
+                        'id' => OrderedTimeUuidType::bytes($id),
+                        'status' => $params['status'],
+                        'now' => $now,
+                        'pending' => MessageStatus::PENDING->value,
+                    ],
+                    ['id' => ParameterType::BINARY],
+                ));
+            } catch (UniqueConstraintViolationException) {
+                // Its dedup_key is taken by an open message: it stays failed or completed.
+            }
+        }
+
+        return $replayed;
+    }
+
+    /**
      * One page of a queue's messages, newest first, after the message $afterId.
+     *
+     * $search is a message id or text in the body. An id finds that message, and the
+     * messages whose body names it (a body often carries the id of what it is about).
+     * Text is matched without regard to case, as stored and as JSON escapes it (a slash,
+     * a quote or an accented letter is stored escaped). Either way it reads the bodies of
+     * the queue's messages, newest first, until the page is full: a search that finds
+     * little reads the whole queue, which is what an admin search may do.
      *
      * @return list<Message>
      */
@@ -804,6 +814,7 @@ class MessageRepository extends ServiceEntityRepository
         ?string $errorType,
         int $limit,
         ?string $afterId,
+        ?string $search = null,
     ): array {
         $conn = $this->getEntityManager()->getConnection();
         $where = 'tenant_id = :tenant AND queue = :queue';
@@ -816,7 +827,7 @@ class MessageRepository extends ServiceEntityRepository
         }
 
         if ($errorType !== null) {
-            $where .= ' AND ' . self::ERROR_TYPE . ' = :error_type';
+            $where .= ' AND ' . $this->errorType() . ' = :error_type';
             $params['error_type'] = $errorType;
         }
 
@@ -826,10 +837,40 @@ class MessageRepository extends ServiceEntityRepository
             $types['after'] = 'uuid_binary_ordered_time';
         }
 
-        $ids = $conn->fetchFirstColumn(
-            "SELECT id FROM messages WHERE {$where} ORDER BY id DESC LIMIT " . (int) $limit,
-            $params,
-            $types,
+        if ($search !== null) {
+            // The text as typed, and as it reads inside a JSON string (DBAL stores bodies
+            // with json_encode's default escaping).
+            $needles = [mb_strtolower($search)];
+            $encoded = json_encode($search);
+
+            if ($encoded !== false) {
+                $needles[] = mb_strtolower(substr($encoded, 1, -1));
+            }
+
+            $needles = array_values(array_unique($needles));
+            $matches = [];
+
+            foreach ($needles as $i => $needle) {
+                $matches[] = 'LOWER(' . $this->dialect->jsonText('body') . ") LIKE :search_{$i} ESCAPE '!'";
+                $params["search_{$i}"] = '%' . strtr($needle, ['!' => '!!', '%' => '!%', '_' => '!_']) . '%';
+            }
+
+            if ($this->isMessageId($search)) {
+                $matches[] = 'id = :search_id';
+                $params['search_id'] = $search;
+                $types['search_id'] = 'uuid_binary_ordered_time';
+            }
+
+            $where .= ' AND (' . implode(' OR ', $matches) . ')';
+        }
+
+        $ids = array_map(
+            OrderedTimeUuidType::bytes(...),
+            $conn->fetchFirstColumn(
+                "SELECT id FROM messages WHERE {$where} ORDER BY id DESC LIMIT " . (int) $limit,
+                $params,
+                $types,
+            ),
         );
 
         if ($ids === []) {
@@ -840,7 +881,7 @@ class MessageRepository extends ServiceEntityRepository
 
         $messages = $this->createQueryBuilder('m')
             ->where('m.id IN (:ids)')
-            ->setParameter('ids', $ids)
+            ->setParameter('ids', $ids, ArrayParameterType::BINARY)
             ->getQuery()
             ->getResult();
 
@@ -883,9 +924,9 @@ class MessageRepository extends ServiceEntityRepository
         }
 
         $row = $this->getEntityManager()->getConnection()->fetchAssociative(
-            <<<'SQL'
+            <<<SQL
                 SELECT queue, status, receipt, lease_until, processing_after, retry_count, max_attempts,
-                       JSON_VALUE(error_details, '$.expired') AS expired
+                       {$this->dialect->jsonValue('error_details', 'expired')} AS expired
                 FROM messages
                 WHERE id = :id AND tenant_id = :tenant
                 SQL,
@@ -899,8 +940,8 @@ class MessageRepository extends ServiceEntityRepository
 
         $row['retry_count'] = (int) $row['retry_count'];
         $row['max_attempts'] = $row['max_attempts'] === null ? null : (int) $row['max_attempts'];
-        // JSON_VALUE renders a JSON true as 1 on MariaDB
-        $row['expired'] = in_array($row['expired'], ['1', 'true'], true);
+        // A JSON true reads as 1 on MariaDB and SQLite, as true on PostgreSQL and MySQL.
+        $row['expired'] = in_array((string) $row['expired'], ['1', 'true'], true);
 
         return $row;
     }
@@ -957,17 +998,29 @@ class MessageRepository extends ServiceEntityRepository
             tenant_id = :tenant AND queue = :queue AND status = 'processing'
             AND lease_until < :now
             SQL;
-        $exhausted = 'retry_count + 1 >= LEAST(COALESCE(max_attempts, :max_attempts), :limit)';
-        $errorDetails = <<<'SQL'
-            JSON_OBJECT('message', 'Lease expired', 'expired', JSON_EXTRACT('true', '$'), 'at', :at,
-                        'attempt', retry_count + 1, 'consumer', consumed_by, 'route', route,
-                        'permanent', JSON_EXTRACT('false', '$'))
-            SQL;
+        // Numbers are bound as numbers: SQLite compares a number bound as text as text.
+        $types = [
+            'max_attempts' => ParameterType::INTEGER,
+            'limit' => ParameterType::INTEGER,
+            'initial' => ParameterType::INTEGER,
+            'max_delay' => ParameterType::INTEGER,
+        ];
+        $d = $this->dialect;
+        $exhausted = 'retry_count + 1 >= ' . $d->least('COALESCE(max_attempts, :max_attempts)', ':limit');
+        $errorDetails = $d->jsonObject([
+            'message' => "'Lease expired'",
+            'expired' => $d->jsonBool(true),
+            'at' => $d->jsonString(':at'),
+            'attempt' => 'retry_count + 1',
+            'consumer' => 'consumed_by',
+            'route' => 'route',
+            'permanent' => $d->jsonBool(false),
+        ]);
         // The attempt's route failed now; a route is a plain JSON key (Route::PATTERN).
-        $failedRoutes = <<<'SQL'
-            IF(route IS NULL, failed_routes,
-               JSON_SET(COALESCE(failed_routes, JSON_OBJECT()), CONCAT('$."', route, '"'), :now))
-            SQL;
+        $failedRoutes = 'CASE WHEN route IS NULL THEN failed_routes ELSE '
+            . $d->jsonWith('failed_routes', 'route', $d->jsonString(':now')) . ' END';
+        $delay = $d->least(':initial * ' . $d->power(':multiplier', 'retry_count'), ':max_delay');
+        $backoff = $d->plusSeconds(':now', "FLOOR({$delay})");
         $at = \DateTimeImmutable::createFromInterface($now)->setTimezone(Utc::zone())->format('Y-m-d\\TH:i:s\\Z');
 
         $sweep = function () use (
@@ -978,9 +1031,11 @@ class MessageRepository extends ServiceEntityRepository
             $exhausted,
             $errorDetails,
             $failedRoutes,
+            $backoff,
             $at,
+            $types,
         ): array {
-            $conn->executeStatement('SET TRANSACTION ISOLATION LEVEL READ COMMITTED');
+            $this->dialect->readCommitted($conn);
             $conn->beginTransaction();
 
             try {
@@ -990,10 +1045,12 @@ class MessageRepository extends ServiceEntityRepository
                     $result['discarded'] = (int) $conn->executeStatement(
                         "DELETE FROM messages WHERE {$expired} AND {$exhausted}",
                         $params,
+                        $types,
                     );
                 } else {
-                    // error_details first: MariaDB assigns left to right, so it still sees
-                    // the retry_count and consumed_by of the attempt that expired.
+                    // error_details first: MariaDB and MySQL assign left to right, so it still
+                    // sees the retry_count and consumed_by of the attempt that expired
+                    // (PostgreSQL and SQLite read the old row throughout).
                     $result['dead_lettered'] = (int) $conn->executeStatement(
                         <<<SQL
                             UPDATE messages
@@ -1008,6 +1065,7 @@ class MessageRepository extends ServiceEntityRepository
                             WHERE {$expired} AND {$exhausted}
                             SQL,
                         $params + ['at' => $at],
+                        $types,
                     );
                 }
 
@@ -1017,8 +1075,7 @@ class MessageRepository extends ServiceEntityRepository
                         SET error_message = 'Lease expired',
                             error_details = {$errorDetails},
                             failed_routes = {$failedRoutes},
-                            processing_after = CAST(:now AS DATETIME)
-                                + INTERVAL FLOOR(LEAST(:initial * POW(:multiplier, retry_count), :max_delay)) SECOND,
+                            processing_after = {$backoff},
                             retry_count = retry_count + 1,
                             status = 'pending',
                             consumed_by = NULL,
@@ -1033,6 +1090,7 @@ class MessageRepository extends ServiceEntityRepository
                         'multiplier' => $settings['backoff']['multiplier'],
                         'max_delay' => $settings['backoff']['max_seconds'],
                     ],
+                    $types,
                 );
 
                 $conn->commit();

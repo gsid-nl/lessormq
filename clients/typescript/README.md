@@ -57,7 +57,7 @@ await new Worker<{ to?: string }>(client, "mail", async (message, job) => {
   already waiting is not cut off; it ends within `waitSeconds`, and a message it brings
   is given back.
 
-`Worker` options: `consumer` (`$HOSTNAME` by default), `route`, `waitSeconds` (20),
+`Worker` options: `consumer` (`$HOSTNAME:pid` by default), `route`, `waitSeconds` (20),
 `leaseSeconds`, `extendEvery`, `autoExtend`, `maxMessages`, `maxSeconds`,
 `errorPauseMs`, `signal`, `logger`. Several workers can run side by side on one client.
 

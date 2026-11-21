@@ -5,6 +5,9 @@
 #   conformance/run.sh [filter]     e.g. conformance/run.sh lease
 #   LESSORMQ_ADAPTER=clients/php/tests/Conformance/adapter.php conformance/run.sh
 #                                   the same scenarios through the PHP client
+#   LESSORMQ_DATABASE=postgresql conformance/run.sh
+#                                   the server on another database: mariadb (the default),
+#                                   mysql, postgresql or sqlite
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -15,14 +18,24 @@ if [ ! -f vendor/autoload.php ]; then
 fi
 
 project=lessormq-conformance
+database=${LESSORMQ_DATABASE:-mariadb}
+files=(-f compose.yaml)
+
+case $database in
+    mariadb) ;;
+    mysql | postgresql | sqlite) files+=(-f "compose.$database.yaml") ;;
+    *) echo "LESSORMQ_DATABASE is mariadb, mysql, postgresql or sqlite, not $database." >&2; exit 2 ;;
+esac
+
 export LESSORMQ_PORT=${LESSORMQ_PORT:-18080}
 # Lease scenarios wait for expired leases to be ended; do that every second.
 export LEASE_SWEEP_SECONDS=1
 
-compose() { docker compose -p "$project" -f compose.yaml "$@"; }
+compose() { docker compose -p "$project" "${files[@]}" "$@"; }
 trap 'compose down -v --remove-orphans >/dev/null 2>&1' EXIT
 
-compose up -d --wait --quiet-pull
+# --build: the image must have the drivers the Dockerfile now asks for.
+compose up -d --wait --quiet-pull --build
 key=$(compose exec -T app bin/console lessormq:operator-key:create --name=conformance | tail -n 1)
 
 LESSORMQ_URL="http://127.0.0.1:$LESSORMQ_PORT" LESSORMQ_OPERATOR_KEY="$key" php conformance/php/run.php "$@"

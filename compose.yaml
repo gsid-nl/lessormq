@@ -1,6 +1,10 @@
 # A LessorMQ server with MariaDB and Redis, for local use and the conformance suite
 # (conformance/run.sh). Serves the working tree with PHP's built-in server, on the base
 # stage of docker/Dockerfile; not a production setup.
+#
+# On another database, add its file: compose.mysql.yaml, compose.postgresql.yaml or
+# compose.sqlite.yaml, as in
+#   docker compose -f compose.yaml -f compose.postgresql.yaml up -d --wait
 services:
   db:
     image: mariadb:10.11
@@ -20,6 +24,8 @@ services:
       context: .
       dockerfile: docker/Dockerfile
       target: base
+      # A current PHP image: the Alpine packages the Dockerfile adds must match its libc.
+      pull: true
     image: lessormq-dev:8.4
     user: "${LESSORMQ_UID:-1000}:${LESSORMQ_GID:-1000}"
     working_dir: /srv/lessormq

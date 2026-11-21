@@ -24,12 +24,19 @@ composer install
 docker compose up -d --wait        # MariaDB, Redis and the server on :18080
 vendor/bin/phpunit                 # unit and functional tests
 conformance/run.sh                 # the protocol scenarios against a real server
+LESSORMQ_DATABASE=postgresql conformance/run.sh   # ... on mysql, postgresql or sqlite
 ```
 
 - PHP code follows PSR-12 (`phpcs --standard=PSR12 src tests`).
 - Migrations are append-only: never edit or delete one that exists; write a new one,
   and keep DDL online and idempotent (`ADD COLUMN IF NOT EXISTS`, `ALGORITHM=INSTANT`
   or `INPLACE, LOCK=NONE`).
+- Each database has its own series: `migrations/` (MariaDB), `migrations/mysql`,
+  `migrations/postgresql`, `migrations/sqlite`. A schema change is a migration in all
+  four.
+- SQL that differs between the databases goes in `src/Database` (the dialects); the rest
+  is written once, in SQL all four read alike. The conformance suite runs on every
+  database in CI.
 - Times are UTC everywhere.
 
 ## Working on a client
@@ -52,24 +59,21 @@ Each client's README says how to run its own tests.
 
 ## Releases
 
-A maintainer releases by pushing a version tag; `.github/workflows/release.yml` runs the
-whole of CI on the tagged commit (the conformance suite through every client included)
-and publishes only when it passes:
+A maintainer releases by pushing a version tag, `0.3.0`;
+`.github/workflows/release.yml` runs the whole of CI on the tagged commit (the
+conformance suite through every client included) and only when it passes publishes, all
+at that version:
 
-| Tag | Publishes |
-|---|---|
-| `0.3.0` | the server image `ghcr.io/gsid-nl/lessormq`, and a GitHub release |
-| `python-0.2.0` | `lessormq` on PyPI |
-| `typescript-0.2.0` | `lessormq` on npm |
-| `php-0.2.0` | `lessormq/client` on Packagist, as tag `v0.2.0` on gsid-nl/lessormq-php |
-| `messenger-0.2.0` | `lessormq/messenger` on Packagist, as tag `v0.2.0` on gsid-nl/lessormq-messenger |
-| `go-0.2.0` | `github.com/gsid-nl/lessormq-go`, as tag `v0.2.0` on that repository |
+- the server image `ghcr.io/gsid-nl/lessormq` and a GitHub release;
+- `lessormq` on PyPI and on npm;
+- `lessormq/client` and `lessormq/messenger` on Packagist (tags on gsid-nl/lessormq-php and
+  gsid-nl/lessormq-messenger);
+- `github.com/gsid-nl/lessormq-go` (a tag on that repository).
 
-The Python and TypeScript packages carry their version (`__init__.py`, `package.json`);
-raise it in a commit before tagging, or the release stops. Clients are versioned apart
-from the server and from each other. When `lessormq/client` moves to a new minor version,
-raise its branch alias in `clients/php/composer.json` and the constraint on it in
-`clients/symfony-messenger/composer.json`.
+Version numbers are not kept in the packages: the release writes the tag's into the
+Python and TypeScript packages as it builds them, and `lessormq/messenger` requires
+`lessormq/client` of the same version. A tag `python-0.3.1` (likewise `typescript-`,
+`php-`, `messenger-`, `go-`) releases only that client, for a fix of its own.
 
 ## Commits and pull requests
 

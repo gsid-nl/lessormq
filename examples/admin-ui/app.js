@@ -279,7 +279,7 @@ async function queuesTab(tenant, body) {
 async function keysTab(tenant, body) {
   const rows = h('tbody')
   const name = h('input', { required: true, maxlength: 255 })
-  const scopes = ['publish', 'consume', 'admin'].map((scope) => h('label', {}, scope, h('input', { type: 'checkbox', value: scope, checked: scope !== 'admin' })))
+  const scopes = ['publish', 'consume', 'metrics', 'admin'].map((scope) => h('label', {}, scope, h('input', { type: 'checkbox', value: scope, checked: scope === 'publish' || scope === 'consume' })))
   const queues = h('input', { placeholder: 'all, or e.g. import-* mail' })
   const created = h('div')
 

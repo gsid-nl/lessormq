@@ -63,6 +63,25 @@ jobs:
       - name: Through the Go client
         run: LESSORMQ_ADAPTER_CMD="cd clients/go && go run ./internal/conformance" conformance/run.sh
 
+  # The protocol scenarios over plain HTTP with the server on each of the other
+  # databases; MariaDB is the conformance job above.
+  databases:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        database: [mysql, postgresql, sqlite]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          tools: composer
+      - run: composer install --no-interaction --no-progress
+      - run: conformance/run.sh
+        env:
+          LESSORMQ_DATABASE: ${{ matrix.database }}
+
   clients:
     runs-on: ubuntu-latest
     steps:

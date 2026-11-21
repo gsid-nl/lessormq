@@ -80,12 +80,40 @@ final class Runner
      */
     private function scenario(array $scenario, int $number): array
     {
+        if (!isset($scenario['tenant_quotas']) && empty($scenario['own_tenant'])) {
+            return $this->runScenario($scenario, $number);
+        }
+
+        // Quotas, and figures over all of a tenant's queues, hold for a whole tenant, so
+        // this scenario gets one of its own as tenant a.
+        $shared = $this->tenants['a'];
+        $this->tenants['a'] = $this->createTenant('q' . $number, $scenario['tenant_quotas'] ?? []);
+
+        try {
+            return $this->runScenario($scenario, $number);
+        } finally {
+            $this->removeTenant($this->tenants['a']);
+            $this->tenants['a'] = $shared;
+        }
+    }
+
+    /**
+     * @param array<string, mixed> $scenario
+     * @return list<string> failures, empty when the scenario passed
+     */
+    private function runScenario(array $scenario, int $number): array
+    {
         $prefix = sprintf('c%s-%d', $this->runId, $number);
         $saved = [];
 
         foreach ($scenario['queues'] ?? [] as $queue => $settings) {
             foreach (array_keys($this->tenants) as $tenant) {
-                $response = $this->admin($tenant, 'PATCH', '/v1/queues/' . $prefix . '-' . $queue, $settings);
+                $response = $this->admin(
+                    $this->tenants[$tenant]['key'],
+                    'PATCH',
+                    '/v1/queues/' . $prefix . '-' . $queue,
+                    $settings,
+                );
 
                 if ($response['status'] !== 200) {
                     return [sprintf('setup of queue %s failed: %s', $queue, json_encode($response['body']))];
@@ -136,7 +164,13 @@ final class Runner
         $tenant = $args['tenant'] ?? 'a';
         unset($args['tenant']);
 
-        if (isset($args['queue']) || in_array($name, ['publish', 'claim', 'settings', 'queue'], true)) {
+        $queueSteps = [
+            'publish', 'claim', 'publish_http', 'claim_http', 'settings', 'queue', 'messages', 'replay_all', 'purge',
+            'workers',
+            'history',
+        ];
+
+        if (isset($args['queue']) || in_array($name, $queueSteps, true)) {
             $args['queue'] = $prefix . '-' . ($args['queue'] ?? 'main');
         }
 
@@ -157,19 +191,69 @@ final class Runner
         }
 
         $started = microtime(true);
-        $key = $this->tenants[$tenant]['key'];
+        // Another key than the tenant's admin key: one saved from an api_key step, or the
+        // operator key.
+        $key = match (true) {
+            !empty($args['operator']) => $this->operatorKey,
+            isset($args['key']) => (string) $args['key'],
+            default => $this->tenants[$tenant]['key'],
+        };
+        unset($args['key'], $args['operator']);
         $id = rawurlencode((string) ($args['id'] ?? ''));
 
         $result = match (true) {
             in_array($name, self::PROTOCOL_CALLS, true) => $this->adapter->call($name, $key, $args),
-            $name === 'settings' => $this->admin($tenant, 'PATCH', '/v1/queues/' . $args['queue'], $args['set']),
-            $name === 'queue' => $this->admin($tenant, 'GET', '/v1/queues/' . $args['queue']),
-            $name === 'message' => $this->admin($tenant, 'GET', '/v1/messages/' . $id),
-            $name === 'replay' => $this->admin($tenant, 'POST', '/v1/messages/' . $id . '/replay'),
+            $name === 'settings' => $this->admin($key, 'PATCH', '/v1/queues/' . $args['queue'], $args['set']),
+            $name === 'queue' => $this->admin($key, 'GET', '/v1/queues/' . $args['queue']),
+            $name === 'messages' => $this->admin(
+                $key,
+                'GET',
+                '/v1/queues/' . $args['queue'] . '/messages?'
+                    . http_build_query(array_diff_key($args, ['queue' => true])),
+            ),
+            $name === 'replay_all', $name === 'purge' => $this->admin(
+                $key,
+                'POST',
+                '/v1/queues/' . $args['queue'] . '/' . ($name === 'purge' ? 'purge' : 'replay'),
+                array_diff_key($args, ['queue' => true]),
+            ),
+            // Plain HTTP also when a client library runs the suite: for answers a library
+            // would hide, such as a 429 it waits out and retries.
+            $name === 'publish_http' => $this->admin(
+                $key,
+                'POST',
+                '/v1/queues/' . $args['queue'] . '/messages',
+                array_diff_key($args, ['queue' => true]),
+            ),
+            $name === 'claim_http' => $this->admin(
+                $key,
+                'POST',
+                '/v1/queues/' . $args['queue'] . '/claims',
+                (object) array_diff_key($args, ['queue' => true]),
+            ),
+            $name === 'workers' => $this->admin($key, 'GET', '/v1/queues/' . $args['queue'] . '/workers'),
+            $name === 'tenant' => $this->admin($key, 'GET', '/v1/tenant'),
+            $name === 'metrics' => $this->http->request('GET', '/metrics'),
+            $name === 'tenant_metrics' => $this->admin($key, 'GET', '/v1/metrics'),
+            $name === 'history' => $this->admin(
+                $key,
+                'GET',
+                '/v1/queues/' . $args['queue'] . '/history?'
+                    . http_build_query(array_diff_key($args, ['queue' => true])),
+            ),
+            $name === 'tenant_history' => $this->admin($key, 'GET', '/v1/history?' . http_build_query($args)),
+            $name === 'api_key' => $this->admin($key, 'POST', '/v1/api-keys', $args),
+            $name === 'message' => $this->admin($key, 'GET', '/v1/messages/' . $id),
+            $name === 'replay' => $this->admin($key, 'POST', '/v1/messages/' . $id . '/replay'),
             default => throw new \InvalidArgumentException('unknown step ' . $name),
         };
 
-        return ['status' => $result['status'], 'body' => $result['body'], 'elapsed' => microtime(true) - $started];
+        return [
+            'status' => $result['status'],
+            'body' => $result['body'],
+            'headers' => $result['headers'] ?? [],
+            'elapsed' => microtime(true) - $started,
+        ];
     }
 
     /**
@@ -240,41 +324,55 @@ final class Runner
     /**
      * @return array{status: int, body: mixed}
      */
-    private function admin(string $tenant, string $method, string $path, mixed $body = null): array
+    private function admin(string $key, string $method, string $path, mixed $body = null): array
     {
-        return $this->http->request(
-            $method,
-            $path,
-            $body,
-            ['Authorization' => 'Bearer ' . $this->tenants[$tenant]['key']],
-        );
+        return $this->http->request($method, $path, $body, ['Authorization' => 'Bearer ' . $key]);
     }
 
     private function createTenants(): void
     {
         foreach (['a', 'b'] as $name) {
-            $id = sprintf('conformance-%s-%s', $this->runId, $name);
-            $response = $this->http->request(
-                'POST',
-                '/v1/tenants',
-                ['id' => $id, 'name' => 'Conformance ' . $name],
-                ['Authorization' => 'Bearer ' . $this->operatorKey],
-            );
-
-            if ($response['status'] !== 201) {
-                throw new \RuntimeException('could not create tenant ' . $id . ': ' . json_encode($response['body']));
-            }
-
-            $this->tenants[$name] = ['id' => $id, 'key' => $response['body']['admin_key']['secret']];
+            $this->tenants[$name] = $this->createTenant($name);
         }
+    }
+
+    /**
+     * @param array<string, int|null> $quotas
+     * @return array{id: string, key: string}
+     */
+    private function createTenant(string $name, array $quotas = []): array
+    {
+        $id = sprintf('conformance-%s-%s', $this->runId, $name);
+        $body = ['id' => $id, 'name' => 'Conformance ' . $name];
+
+        if ($quotas !== []) {
+            $body['quotas'] = $quotas;
+        }
+
+        $auth = ['Authorization' => 'Bearer ' . $this->operatorKey];
+        $response = $this->http->request('POST', '/v1/tenants', $body, $auth);
+
+        if ($response['status'] !== 201) {
+            throw new \RuntimeException('could not create tenant ' . $id . ': ' . json_encode($response['body']));
+        }
+
+        return ['id' => $id, 'key' => $response['body']['admin_key']['secret']];
     }
 
     private function removeTenants(): void
     {
         foreach ($this->tenants as $tenant) {
-            $auth = ['Authorization' => 'Bearer ' . $this->operatorKey];
-            $this->http->request('PATCH', '/v1/tenants/' . $tenant['id'], ['status' => 'suspended'], $auth);
-            $this->http->request('DELETE', '/v1/tenants/' . $tenant['id'], null, $auth);
+            $this->removeTenant($tenant);
         }
+    }
+
+    /**
+     * @param array{id: string, key: string} $tenant
+     */
+    private function removeTenant(array $tenant): void
+    {
+        $auth = ['Authorization' => 'Bearer ' . $this->operatorKey];
+        $this->http->request('PATCH', '/v1/tenants/' . $tenant['id'], ['status' => 'suspended'], $auth);
+        $this->http->request('DELETE', '/v1/tenants/' . $tenant['id'], null, $auth);
     }
 }

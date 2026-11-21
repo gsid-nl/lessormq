@@ -252,7 +252,10 @@ export class Worker<Body = unknown> {
   }
 }
 
+/** The host and the process, so the workers on one host are told apart. */
 function defaultConsumer(): string | undefined {
-  const env = (globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env;
-  return env?.HOSTNAME || undefined;
+  const proc = (globalThis as { process?: { env?: Record<string, string | undefined>; pid?: number } }).process;
+  const host = proc?.env?.HOSTNAME;
+  if (!host) return undefined;
+  return proc?.pid === undefined ? host : `${host}:${proc.pid}`;
 }

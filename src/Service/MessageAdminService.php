@@ -24,9 +24,14 @@ class MessageAdminService
 {
     private const UUID = '[0-9a-f]{8}-[0-9a-f]{4}-1[0-9a-f]{3}-[0-9a-f]{4}-[0-9a-f]{12}';
 
+    /** The longest search a message list takes. */
+    private const SEARCH_MAX = 200;
+
     public function __construct(
         private readonly MessageRepository $messages,
         private readonly QueueSettingsService $queueSettings,
+        private readonly QueueStatsService $queueStats,
+        private readonly ClaimWaiter $waiter,
         private readonly LoggerInterface $logger,
     ) {
     }
@@ -39,6 +44,7 @@ class MessageAdminService
         $tenant = $this->authorise($principal, $queue);
         $status = $this->status($request->query->get('status'));
         $errorType = $request->query->get('error_type');
+        $search = $this->search($request->query->get('search'));
         $limit = Pagination::limit($request);
         $page = $this->messages->page(
             $tenant,
@@ -47,6 +53,7 @@ class MessageAdminService
             $errorType === '' ? null : $errorType,
             $limit + 1,
             Pagination::after($request, self::UUID),
+            $search,
         );
         $next = null;
 
@@ -78,9 +85,13 @@ class MessageAdminService
 
     public function delete(Principal $principal, string $id): void
     {
-        if (!$this->messages->deleteUnlessProcessing($this->find($principal, $id))) {
+        $message = $this->find($principal, $id);
+
+        if (!$this->messages->deleteUnlessProcessing($message)) {
             throw ApiProblem::invalidState('A message that is processing cannot be deleted; its lease will end.');
         }
+
+        $this->queueStats->forget($message->getTenantId(), $message->getQueue());
     }
 
     /**
@@ -99,6 +110,9 @@ class MessageAdminService
         if (!$replayed) {
             throw ApiProblem::invalidState('Only a failed or completed message can be replayed.');
         }
+
+        $this->queueStats->forget($message->getTenantId(), $message->getQueue());
+        $this->waiter->notify($message->getTenantId(), $message->getQueue());
 
         $this->logger->info('Message replayed', ['message_id' => $id]);
 
@@ -138,6 +152,12 @@ class MessageAdminService
             $limit,
         );
 
+        $this->queueStats->forget($tenant, $queue);
+
+        if ($action === 'replay' && $count > 0) {
+            $this->waiter->notify($tenant, $queue);
+        }
+
         $this->logger->info('Bulk ' . $action, [
             'tenant' => $tenant,
             'queue' => $queue,
@@ -172,6 +192,23 @@ class MessageAdminService
         }
 
         return $principal->tenant();
+    }
+
+    private function search(?string $value): ?string
+    {
+        $value = trim((string) $value);
+
+        if ($value === '') {
+            return null;
+        }
+
+        if (mb_strlen($value) > self::SEARCH_MAX) {
+            throw ApiProblem::validation([
+                ['field' => 'search', 'message' => 'at most ' . self::SEARCH_MAX . ' characters'],
+            ]);
+        }
+
+        return $value;
     }
 
     private function status(?string $value): ?MessageStatus

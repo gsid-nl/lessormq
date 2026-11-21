@@ -8,6 +8,7 @@ use App\Api\ApiProblem;
 use App\Api\Input;
 use App\Model\QueueConfig;
 use App\Model\QueueSettings;
+use App\Model\Quotas;
 use App\Repository\QueueRepository;
 use App\Time\Utc;
 use Predis\Client as RedisClient;
@@ -87,12 +88,24 @@ class QueueSettingsService
 
             $pausedAt = $entry['paused_at'] === null ? null : Utc::parse($entry['paused_at']);
 
-            $config = new QueueConfig($entry['settings'], $pausedAt, $entry['exists']);
+            // An entry cached before quotas were part of it has none until it expires.
+            $config = new QueueConfig($entry['settings'], $pausedAt, $entry['exists'], $entry['quotas'] ?? []);
             $this->memo[$this->memoKey($tenant, $queue)] = $config;
             $result[$queue] = $config;
         }
 
         return $result;
+    }
+
+    /**
+     * The queue's settings as they are now, not as this request first read them: for a
+     * claim that waited and was woken, perhaps by a resume.
+     */
+    public function reload(string $tenant, string $queue): QueueConfig
+    {
+        unset($this->memo[$this->memoKey($tenant, $queue)]);
+
+        return $this->forQueue($tenant, $queue);
     }
 
     /**
@@ -107,6 +120,7 @@ class QueueSettingsService
             return;
         }
 
+        $this->assertRoomForQueue($tenant, $config);
         $this->queues->createIfMissing(
             $tenant,
             $queue,
@@ -142,8 +156,16 @@ class QueueSettingsService
         $current = $this->forQueue($tenant, $queue);
         $errors = QueueSettings::validatePatch($patch, $current->settings);
 
+        if ($errors === []) {
+            $errors = Quotas::settingErrors($patch, $current->quotas);
+        }
+
         if ($errors !== []) {
             throw ApiProblem::validation($errors);
+        }
+
+        if (!$current->exists) {
+            $this->assertRoomForQueue($tenant, $current);
         }
 
         $paused = array_key_exists('paused', $patch) ? (bool) $patch['paused'] : null;
@@ -206,21 +228,40 @@ class QueueSettingsService
     }
 
     /**
-     * @return array{settings: array<string, mixed>, paused_at: ?string, exists: bool}
+     * A new queue only while the tenant has fewer than its max_queues. Counted in the
+     * database: a queue is new only once.
+     */
+    private function assertRoomForQueue(string $tenant, QueueConfig $config): void
+    {
+        $max = $config->quota('max_queues');
+
+        if ($max !== null && $this->queues->count($tenant) >= $max) {
+            throw ApiProblem::quotaExceeded(sprintf('This tenant may have at most %d queues.', $max));
+        }
+    }
+
+    /**
+     * @return array{
+     *     settings: array<string, mixed>, quotas: array<string, int|null>, paused_at: ?string, exists: bool
+     * }
      */
     private function resolve(string $tenant, string $queue): array
     {
         $stored = $this->queues->load($tenant, $queue);
+        $quotas = Quotas::resolve($stored['quotas'] ?? []);
 
         return [
-            'settings' => QueueSettings::resolve($stored['defaults'], $stored['settings']),
+            'settings' => Quotas::cap(QueueSettings::resolve($stored['defaults'], $stored['settings']), $quotas),
+            'quotas' => $quotas,
             'paused_at' => $stored['paused_at'],
             'exists' => $stored['exists'],
         ];
     }
 
     /**
-     * @param array{settings: array<string, mixed>, paused_at: ?string, exists: bool} $entry
+     * @param array{
+     *     settings: array<string, mixed>, quotas: array<string, int|null>, paused_at: ?string, exists: bool
+     * } $entry
      */
     private function store(string $tenant, string $queue, array $entry): void
     {

@@ -66,6 +66,17 @@ class TenantRepository extends ServiceEntityRepository
     }
 
     /**
+     * @return list<string> the ids of the tenants that are not being deleted
+     */
+    public function ids(): array
+    {
+        return $this->getEntityManager()->getConnection()->fetchFirstColumn(
+            'SELECT id FROM tenants WHERE status <> ? ORDER BY id',
+            [TenantStatus::DELETING->value],
+        );
+    }
+
+    /**
      * @return list<Tenant>
      */
     public function findDeleting(): array

@@ -1,22 +1,24 @@
-# Releases, one per version tag on this repository (tags are set by hand):
+# Releases from a version tag on this repository. gsid's Gitea sets it when a version is
+# tagged there (.gitea/workflows/images.yml, publish-github.sh), so one tag releases
+# everything:
 #
-#   0.3.0             the server: ghcr.io/gsid-nl/lessormq:0.3.0 (and :0.3, :latest),
-#                     and a GitHub release
-#   python-0.2.0      PyPI lessormq
-#   typescript-0.2.0  npm lessormq
-#   php-0.2.0         tag v0.2.0 on gsid-nl/lessormq-php, which Packagist serves as
-#                     lessormq/client
-#   messenger-0.2.0   tag v0.2.0 on gsid-nl/lessormq-messenger (Packagist lessormq/messenger)
-#   go-0.2.0          tag v0.2.0 on gsid-nl/lessormq-go (github.com/gsid-nl/lessormq-go)
+#   0.3.0             the server (ghcr.io/gsid-nl/lessormq:0.3.0, :0.3, :latest, and a
+#                     GitHub release) and every client at 0.3.0: PyPI lessormq, npm
+#                     lessormq, Packagist lessormq/client and lessormq/messenger (tags
+#                     v0.3.0 on gsid-nl/lessormq-php and -messenger), and Go (tag v0.3.0 on
+#                     gsid-nl/lessormq-go)
+#   python-0.3.1      only that client, for a fix of its own; likewise typescript-, php-,
+#   ...               messenger- and go-
 #
-# Nothing is published unless all of ci.yml passes on the tagged commit: the server's
-# tests and the conformance suite through every client. A version with a hyphen
+# The version comes from the tag: the Python and TypeScript packages get it written in
+# when they are built, and lessormq/messenger requires lessormq/client of the same
+# version. Nothing is published unless all of ci.yml passes on the tagged commit: the
+# server's tests and the conformance suite through every client. A version with a hyphen
 # (0.3.0-rc.1) is a pre-release: no :latest, no :0.3, npm dist-tag next.
 #
 # Set up once, outside this repository:
 #   - PyPI: a trusted publisher for project lessormq (gsid-nl/lessormq, release.yml).
-#   - npm: trusted publishing for package lessormq (gsid-nl/lessormq, release.yml). The
-#     very first publish, before the package exists, needs secret NPM_TOKEN instead.
+#   - npm: trusted publishing for package lessormq (gsid-nl/lessormq, release.yml).
 #   - secret SPLIT_TOKEN: a token that may push tags to gsid-nl/lessormq-php,
 #     gsid-nl/lessormq-messenger and gsid-nl/lessormq-go.
 #   - Packagist: lessormq/client and lessormq/messenger submitted from those repositories.
@@ -42,6 +44,7 @@ jobs:
       component: ${{ steps.parse.outputs.component }}
       version: ${{ steps.parse.outputs.version }}
       prerelease: ${{ steps.parse.outputs.prerelease }}
+      splits: ${{ steps.parse.outputs.splits }}
     steps:
       - uses: actions/checkout@v4
       - id: parse
@@ -57,22 +60,19 @@ jobs:
             echo "::error::$tag: the version must look like 1.2.3 or 1.2.3-rc.1"
             exit 1
           fi
-          # Where the package itself carries a version, the tag must match it.
+          # The clients that live in a repository of their own (PHP, Go).
           case $component in
-            python) declared=$(sed -nE 's/^__version__ = "(.*)"$/\1/p' clients/python/src/lessormq/__init__.py) ;;
-            typescript) declared=$(jq -r .version clients/typescript/package.json) ;;
-            *) declared=$version ;;
+            server) splits='["php", "messenger", "go"]' ;;
+            php | messenger | go) splits="[\"$component\"]" ;;
+            *) splits='[]' ;;
           esac
-          if [ "$declared" != "$version" ]; then
-            echo "::error::$tag, but the $component package says $declared"
-            exit 1
-          fi
           prerelease=false
           [[ $version == *-* ]] && prerelease=true
           {
             echo "component=$component"
             echo "version=$version"
             echo "prerelease=$prerelease"
+            echo "splits=$splits"
           } >> "$GITHUB_OUTPUT"
 
   ci:
@@ -133,7 +133,7 @@ jobs:
 
   python:
     needs: [version, ci]
-    if: needs.version.outputs.component == 'python'
+    if: contains(fromJSON('["server", "python"]'), needs.version.outputs.component)
     runs-on: ubuntu-latest
     permissions:
       id-token: write
@@ -142,7 +142,13 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - run: |
+      - name: Build, with the version of the tag
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          # PEP 440 writes a pre-release 1.2.3-rc.1 as 1.2.3rc1.
+          version=$(echo "$VERSION" | sed -E 's/-(a|alpha)\.?/a/; s/-(b|beta)\.?/b/; s/-rc\.?/rc/')
+          sed -i -E "s/^__version__ = \".*\"$/__version__ = \"$version\"/" clients/python/src/lessormq/__init__.py
           python -m pip install -q build
           python -m build clients/python
       - uses: pypa/gh-action-pypi-publish@release/v1
@@ -151,7 +157,7 @@ jobs:
 
   typescript:
     needs: [version, ci]
-    if: needs.version.outputs.component == 'typescript'
+    if: contains(fromJSON('["server", "typescript"]'), needs.version.outputs.component)
     runs-on: ubuntu-latest
     permissions:
       id-token: write
@@ -167,12 +173,12 @@ jobs:
       # Trusted publishing needs npm 11.5.1 or newer; Node 22 ships npm 10.
       - run: npm install -g 'npm@^11.5.1'
       - run: npm ci
-      - name: Publish
+      - name: Publish, with the version of the tag
         env:
-          # Only for the first publish; afterwards trusted publishing needs no token.
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          VERSION: ${{ needs.version.outputs.version }}
           PRERELEASE: ${{ needs.version.outputs.prerelease }}
         run: |
+          npm version --no-git-tag-version --allow-same-version "$VERSION"
           tag=latest
           [ "$PRERELEASE" = true ] && tag=next
           npm publish --provenance --access public --tag "$tag"
@@ -183,10 +189,14 @@ jobs:
   # the tagged tree, and never moves main.
   split:
     needs: [version, ci]
-    if: contains(fromJSON('["php", "messenger", "go"]'), needs.version.outputs.component)
+    if: needs.version.outputs.splits != '[]'
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        component: ${{ fromJSON(needs.version.outputs.splits) }}
     env:
-      COMPONENT: ${{ needs.version.outputs.component }}
+      COMPONENT: ${{ matrix.component }}
       VERSION: ${{ needs.version.outputs.version }}
       SPLIT_TOKEN: ${{ secrets.SPLIT_TOKEN }}
     steps:
@@ -211,6 +221,11 @@ jobs:
           fi
           find split -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
           git archive "HEAD:$dir" | tar -x -C split
+          # lessormq/messenger requires lessormq/client of its own version.
+          if [ "$COMPONENT" = messenger ]; then
+            sed -i -E "/\"require\": \\{/,/\\}/ s#(\"lessormq/client\": )\"[^\"]*\"#\\1\"^$VERSION\"#" split/composer.json
+            grep -q "\"lessormq/client\": \"^$VERSION\"" split/composer.json
+          fi
           git -C split add -A
           # When main already holds this tree, the tag goes on main itself.
           if ! git -C split diff --cached --quiet; then

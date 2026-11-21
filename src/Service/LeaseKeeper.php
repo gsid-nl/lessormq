@@ -23,6 +23,7 @@ class LeaseKeeper
     public function __construct(
         private readonly MessageRepository $messages,
         private readonly QueueThrottleService $throttle,
+        private readonly ClaimWaiter $waiter,
         private readonly LoggerInterface $logger,
         private readonly int $leaseSweepSeconds = 60,
     ) {
@@ -39,6 +40,11 @@ class LeaseKeeper
 
             if (array_sum($result) > 0) {
                 $this->logger->info('Expired leases ended', ['tenant' => $tenant, 'queue' => $queue] + $result);
+            }
+
+            // Retried after their backoff: waiting claims learn when.
+            if ($result['retried'] > 0) {
+                $this->waiter->notify($tenant, $queue);
             }
         } catch (\Exception $e) {
             $this->logger->warning('Lease sweep failed', [

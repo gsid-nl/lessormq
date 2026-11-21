@@ -14,13 +14,21 @@ use DateTimeImmutable;
 final class QueueConfig
 {
     /**
-     * @param array<string, mixed> $settings resolved, see QueueSettings::DEFAULTS
+     * @param array<string, mixed>    $settings resolved, see QueueSettings::DEFAULTS, and
+     *                                          held to the tenant's quotas
+     * @param array<string, int|null> $quotas   the tenant's, see Quotas::FIELDS
      */
     public function __construct(
         public readonly array $settings,
         public readonly ?DateTimeImmutable $pausedAt,
         public readonly bool $exists,
+        public readonly array $quotas = [],
     ) {
+    }
+
+    public function quota(string $name): ?int
+    {
+        return $this->quotas[$name] ?? null;
     }
 
     public function isPaused(): bool

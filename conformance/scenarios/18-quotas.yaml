@@ -1,0 +1,47 @@
+name: A tenant's quotas hold publishes, claims, new queues and queue settings to its limits
+tenant_quotas:
+  max_queues: 2
+  max_open_messages: 3
+  publish_per_second: 2
+  claim_per_second: 1
+  max_message_bytes: 100
+  max_retention_seconds: 3600
+queues:
+  main: {}
+steps:
+  # Rate: two publishes a second, in a burst of at most two.
+  - publish_http: {body: {n: 1}}
+    expect: {status: 201}
+  - publish_http: {body: {n: 2}}
+    expect: {status: 201}
+  - publish_http: {body: {n: 3}}
+    expect: {status: 429, body.code: rate_limited, headers.retry-after: '1'}
+  - sleep: 1.1
+  # Open messages: two are open, the third fits, a fourth does not.
+  - publish_http: {body: {n: 3}}
+    expect: {status: 201}
+  - sleep: 1.1
+  - publish_http: {body: {n: 4}}
+    expect: {status: 429, body.code: rate_limited, headers.retry-after: {matches: '^[0-9]+$'}}
+  # Claims: one a second.
+  - claim_http: {}
+    expect: {status: 200}
+  - claim_http: {}
+    expect: {status: 429, body.code: rate_limited}
+  # Size: the quota caps the queue's own limit.
+  - queue: {}
+    expect: {body.settings.max_message_bytes: 100, body.settings.retention.completed_seconds: 3600}
+  - sleep: 1.1
+  - publish_http: {queue: main, body: {text: 'This body, with its headers, is longer than the hundred bytes that the quota of this tenant allows.'}}
+    expect: {status: 413, body.code: payload_too_large}
+  - settings: {set: {max_message_bytes: 1000}}
+    expect: {status: 400, body.errors.0.field: max_message_bytes}
+  - settings: {set: {retention: {failed_seconds: 7200}}}
+    expect: {status: 400, body.errors.0.field: retention.failed_seconds}
+  # Queues: main and one more; a third is refused.
+  - settings: {queue: second, set: {}}
+    expect: {status: 200}
+  - settings: {queue: third, set: {}}
+    expect: {status: 403, body.code: quota_exceeded}
+  - publish_http: {queue: third, body: {}}
+    expect: {status: 403, body.code: quota_exceeded}

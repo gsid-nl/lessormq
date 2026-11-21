@@ -22,6 +22,7 @@ final class ApiProblem extends \RuntimeException
         'invalid_state' => 'Invalid state',
         'payload_too_large' => 'Payload too large',
         'rate_limited' => 'Rate limited',
+        'quota_exceeded' => 'Quota exceeded',
         'unavailable' => 'Service unavailable',
         'internal' => 'Internal error',
     ];
@@ -90,6 +91,22 @@ final class ApiProblem extends \RuntimeException
             'payload_too_large',
             sprintf('Body and headers exceed the queue limit of %d bytes.', $limit),
         );
+    }
+
+    /**
+     * A limit that lifts by itself: a rate, or open messages that will be worked off.
+     */
+    public static function rateLimited(int $retryAfter, string $detail): self
+    {
+        return new self(429, 'rate_limited', $detail, [], ['Retry-After' => (string) max(1, $retryAfter)]);
+    }
+
+    /**
+     * A limit that waiting does not lift; it takes a change by the tenant or the operator.
+     */
+    public static function quotaExceeded(string $detail): self
+    {
+        return new self(403, 'quota_exceeded', $detail);
     }
 
     public static function internal(): self

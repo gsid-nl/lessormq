@@ -1,0 +1,24 @@
+name: A tenant reads the metrics of its own queues with a key that can do nothing else; the operator reads every tenant's
+queues:
+  main: {}
+  idle: {}
+steps:
+  - publish: {body: {}}
+  - publish: {tenant: b, body: {}}
+  - api_key: {name: scraper, scopes: [metrics]}
+    save: scraper
+    expect: {status: 201, body.scopes: [metrics]}
+  - tenant_metrics: {key: $scraper.body.secret}
+    expect:
+      status: 200
+      body: {matches: 'lessormq_messages\{tenant="[^"]*-a",queue="[^"]*-main",state="ready"\} 1'}
+  - tenant_metrics: {key: $scraper.body.secret}
+    expect: {body: {matches: 'lessormq_dead_letter_messages\{tenant="[^"]*-a",queue="[^"]*-idle"\} 0'}}
+  - tenant_metrics: {key: $scraper.body.secret}
+    expect: {body: {not_matches: 'tenant="[^"]*-b"'}}
+  - queue: {key: $scraper.body.secret}
+    expect: {status: 200, body.stats.ready: 1}
+  - messages: {key: $scraper.body.secret}
+    expect: {status: 403}
+  - tenant_metrics: {operator: true}
+    expect: {status: 200, body: {matches: 'tenant="[^"]*-b",queue="[^"]*-main",state="ready"\} 1'}}

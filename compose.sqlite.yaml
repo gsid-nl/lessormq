@@ -1,0 +1,14 @@
+# With compose.yaml: the server on SQLite instead of MariaDB, in a file inside the
+# container that goes with it.
+#   docker compose -f compose.yaml -f compose.sqlite.yaml up -d --wait
+services:
+  db:
+    # No database server.
+    profiles: [none]
+
+  app:
+    environment:
+      DATABASE_QUEUE_URL: sqlite:////tmp/lessormq.db
+    depends_on: !override
+      redis:
+        condition: service_started

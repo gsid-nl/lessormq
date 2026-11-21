@@ -1,0 +1,39 @@
+name: Replay all and delete all act on a queue's dead-letter set, and a replay never opens a second message with one dedup key
+queues:
+  main: {max_attempts: 1}
+steps:
+  - publish: {body: {n: 1}, dedup_key: k}
+    save: m1
+  - claim: {}
+    save: l1
+  - fail: {lease: $l1, error: {type: Broken, message: one}}
+    expect: {body.outcome: dead_lettered}
+  - publish: {body: {n: 2}, dedup_key: k}
+    save: m2
+    expect: {status: 201}
+  - claim: {}
+    save: l2
+  - fail: {lease: $l2, error: {type: Broken, message: two}}
+  - publish: {body: {n: 3}}
+    save: m3
+  - claim: {}
+    save: l3
+  - fail: {lease: $l3, error: {type: Other, message: three}}
+  - messages: {status: failed, error_type: Broken}
+    expect: {body.items.0.id: $m2.body.id, body.items.1.id: $m1.body.id, body.items.2: {exists: false}}
+  - tenant: {}
+    expect: {status: 200, body.usage.failed_messages: {between: [3, 1000000]}}
+  - replay_all: {status: failed, error_type: Broken}
+    expect: {status: 200, body.count: 1}
+  - messages: {status: pending}
+    expect: {body.items.0.id: $m1.body.id, body.items.1: {exists: false}}
+  - messages: {status: failed}
+    expect: {body.items.0.id: $m3.body.id, body.items.1.id: $m2.body.id, body.items.2: {exists: false}}
+  - purge: {status: failed}
+    expect: {status: 200, body.count: 2}
+  - messages: {status: failed}
+    expect: {body.items.0: {exists: false}}
+  - queue: {}
+    expect: {body.stats.ready: 1, body.stats.failed: 0}
+  - metrics: {}
+    expect: {status: 200, body: {matches: 'lessormq_'}}

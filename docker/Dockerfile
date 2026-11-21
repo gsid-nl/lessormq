@@ -1,13 +1,19 @@
-# LessorMQ: the server as php-fpm on port 9000, for nginx (or any FastCGI server) in front.
+# LessorMQ: the server as php-fpm, for nginx (or any FastCGI server) in front: claims on
+# port 9001, every other call on port 9000 (docker/claims.conf, docs/self-hosting.md).
 #
 #   docker build -f docker/Dockerfile -t lessormq .
 #
 # The base stage is PHP with the extensions LessorMQ needs and Composer; compose.yaml
-# runs the working tree on it for local use and the conformance suite.
+# runs the working tree on it for local use and the conformance suite. The PDO drivers
+# cover every database LessorMQ runs on: MariaDB and MySQL, PostgreSQL, and SQLite (which
+# the PHP image has built in).
 
 FROM php:8.4-fpm-alpine AS base
 
-RUN docker-php-ext-install pdo_mysql opcache \
+RUN apk add --no-cache libpq \
+    && apk add --no-cache --virtual .build-deps postgresql-dev \
+    && docker-php-ext-install pdo_mysql pdo_pgsql opcache \
+    && apk del .build-deps \
     && rm -rf /tmp/* /usr/src/php*
 
 COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
@@ -25,6 +31,7 @@ ENV APP_ENV=prod \
 COPY ./docker/queue.ini /usr/local/etc/php/conf.d/zz-queue.ini
 COPY ./docker/preload.php /usr/local/etc/php/preload.php
 COPY ./docker/www.conf /usr/local/etc/php-fpm.d/www.conf
+COPY ./docker/claims.conf /usr/local/etc/php-fpm.d/zz-claims.conf
 COPY ./docker/docker-entrypoint.sh /
 
 WORKDIR /app

@@ -16,7 +16,7 @@ export interface paths {
         };
         /**
          * List messages of a queue
-         * @description Newest first. Paginated with an opaque cursor.
+         * @description Newest first. Paginated with an opaque cursor. The filters combine.
          */
         get: operations["listMessages"];
         put?: never;
@@ -261,7 +261,7 @@ export interface paths {
         };
         /**
          * Get a queue's settings and statistics
-         * @description Requires the `consume` or `admin` scope.
+         * @description Requires the `consume`, `metrics` or `admin` scope.
          */
         get: operations["getQueue"];
         put?: never;
@@ -277,6 +277,31 @@ export interface paths {
          *     Pausing is a setting too: `{"paused": true}` stops claims, publishes still land.
          */
         patch: operations["updateQueue"];
+        trace?: never;
+    };
+    "/v1/queues/{queue}/workers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Queue name, unique within the tenant. */
+                queue: components["parameters"]["QueueName"];
+            };
+            cookie?: never;
+        };
+        /**
+         * The workers of a queue
+         * @description The workers that claimed from the queue in the last ten minutes and those that hold
+         *     one of its messages, most recent claim first. A worker is told apart by the
+         *     `consumer` it claims with. Requires the `consume`, `metrics` or `admin` scope.
+         */
+        get: operations["listWorkers"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/v1/queues/{queue}/replay": {
@@ -483,6 +508,79 @@ export interface paths {
         post?: never;
         /** Revoke a tenant's API key */
         delete: operations["revokeTenantApiKey"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/metrics": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Prometheus metrics of the tenant's queues
+         * @description Every queue of the tenant, as far as the key's queue patterns reach, idle ones with
+         *     zeros. With an operator key: every tenant's queues, or one tenant's with the
+         *     `LessorMQ-Tenant` header. A scraper holds a key with only the `metrics` scope.
+         *
+         *     | Metric | |
+         *     |---|---|
+         *     | `lessormq_messages{tenant,queue,state}` | open messages: `ready`, `delayed`, `processing` |
+         *     | `lessormq_dead_letter_messages{tenant,queue}` | messages in the dead-letter set |
+         *     | `lessormq_oldest_ready_seconds{tenant,queue}` | how long the oldest ready message has waited |
+         *     | `lessormq_oldest_processing_seconds{tenant,queue}` | how long the longest lease has been held |
+         *     | `lessormq_max_retry_count{tenant,queue}` | the highest attempt count among open messages |
+         *     | `lessormq_paused{tenant,queue}` | 1 while the queue is paused |
+         *     | `lessormq_workers{tenant,queue}` | workers that claimed in the last minute or hold a message |
+         */
+        get: operations["getMetrics"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/history": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * History of the tenant's queues
+         * @description Every queue the key may use, added up. See [History](#history) for what is counted
+         *     and how far back it reaches.
+         */
+        get: operations["getHistory"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/queues/{queue}/history": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Queue name, unique within the tenant. */
+                queue: components["parameters"]["QueueName"];
+            };
+            cookie?: never;
+        };
+        /** History of a queue */
+        get: operations["getQueueHistory"];
+        put?: never;
+        post?: never;
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -786,13 +884,37 @@ export interface components {
             /** @description Pending, available later (backoff or delay). */
             delayed: number;
             processing: number;
-            /** @description Completed and not yet removed by retention. */
+            /**
+             * @description Completed and not yet removed by retention. Counted at most every 30 seconds
+             *     (they can be many); the other figures are current.
+             */
             completed: number;
             /** @description The dead-letter set. */
             failed: number;
             /** @description How long the oldest ready message has been waiting. Grows when no worker takes the queue. */
             oldest_ready_seconds: number;
             oldest_processing_seconds: number;
+            /** @description Workers that claimed from the queue in the last minute or hold one of its messages. */
+            workers?: number;
+        };
+        Worker: {
+            /** @description The consumer name it claims with (host:pid by default in the client libraries); `(no name)` for claims without one. */
+            consumer: string;
+            /**
+             * Format: date-time
+             * @description Its last claim on this queue; null when it was seen only through a message it holds.
+             */
+            last_claim_at: string | null;
+            /** @description It is waiting for work on this queue now (a claim with `wait_seconds`). */
+            waiting: boolean;
+            /** @description Messages of this queue it holds now. */
+            processing: number;
+            /** @description The User-Agent of its last claim, such as the client library and its version. */
+            client: string | null;
+            /** @description The address its last claim came from. */
+            address: string | null;
+            /** @description It claimed in the last minute or holds a message. */
+            active: boolean;
         };
         Queue: {
             name: components["schemas"]["QueueName"];
@@ -818,7 +940,7 @@ export interface components {
             count: number;
         };
         /** @enum {string} */
-        Scope: "publish" | "consume" | "admin";
+        Scope: "publish" | "consume" | "metrics" | "admin";
         ApiKey: {
             id: string;
             name: string;
@@ -855,16 +977,32 @@ export interface components {
         TenantId: string;
         /** @enum {string} */
         TenantStatus: "active" | "suspended" | "deleting";
-        /** @description Limits per tenant. `null` means unlimited. Exceeding a rate returns `429 rate_limited`. */
+        /**
+         * @description Limits per tenant, set by the operator. `null` means unlimited. A limit that lifts by
+         *     itself (a rate, open messages) answers `429 rate_limited` with `Retry-After`; one that
+         *     does not (the number of queues) answers `403 quota_exceeded`.
+         */
         Quotas: {
+            /** @description Creating a queue beyond it, by publishing or by its settings, returns 403 `quota_exceeded`. */
             max_queues?: number | null;
-            /** @description Pending plus processing, across all queues. Publishing beyond it returns 429. */
+            /**
+             * @description Pending plus processing, across all queues. Publishing beyond it returns 429.
+             *     Checked against a count at most a few seconds old.
+             */
             max_open_messages?: number | null;
+            /** @description Publishes a second, in bursts of up to a second's worth. Beyond it, 429. */
             publish_per_second?: number | null;
+            /** @description Claim requests a second (a waiting claim is one), in bursts of up to a second's worth. Beyond it, 429. */
             claim_per_second?: number | null;
-            /** @description Upper bound for every queue's `max_message_bytes` in this tenant. */
+            /**
+             * @description Upper bound for every queue's `max_message_bytes` in this tenant: a higher setting
+             *     is refused, and a queue is held to it.
+             */
             max_message_bytes?: number | null;
-            /** @description Upper bound for every queue's retention in this tenant. */
+            /**
+             * @description Upper bound for every queue's retention in this tenant: a higher setting is
+             *     refused, and a queue is held to it.
+             */
             max_retention_seconds?: number | null;
         };
         TenantUsage: {
@@ -908,6 +1046,72 @@ export interface components {
             status?: "active" | "suspended";
             quotas?: components["schemas"]["Quotas"];
             queue_defaults?: components["schemas"]["QueueSettingsPatch"];
+        };
+        /**
+         * @description Read back from the messages the server still keeps, so it reaches as far back as
+         *     the queue's retention (completed messages are kept a day unless set otherwise)
+         *     and leaves out messages that were deleted or discarded. The buckets are whole
+         *     multiples of their size; the last one is the current bucket, so far. A result may
+         *     be up to a tenth of a bucket old (10 seconds for `1h`, 5 minutes for `7d`).
+         *
+         *     Times are stored to the second, so a duration is a whole number of seconds and
+         *     work of less than a second mostly reads 0; the average stays true all the same.
+         */
+        History: {
+            /** @description The queue, or null for every queue of the tenant. */
+            queue: string | null;
+            /** @enum {string} */
+            period: "1h" | "6h" | "24h" | "7d";
+            bucket_seconds: number;
+            /**
+             * Format: date-time
+             * @description The start of the first bucket.
+             */
+            from: string;
+            /**
+             * Format: date-time
+             * @description When the figures were read.
+             */
+            to: string;
+            totals: components["schemas"]["HistoryFigures"];
+            /** @description Oldest first, every bucket of the period, empty ones too. */
+            buckets: ({
+                /**
+                 * Format: date-time
+                 * @description The start of the bucket.
+                 */
+                at: string;
+            } & components["schemas"]["HistoryFigures"])[];
+        };
+        HistoryFigures: {
+            /** @description Messages published, as far as they are still kept. */
+            published: number;
+            /** @description Messages completed, counted when they completed. */
+            completed: number;
+            /** @description Messages that went to the dead-letter set and are still there. */
+            dead_lettered: number;
+            /**
+             * @description For the completed messages: how long they waited for a worker, from available
+             *     (published, or due again after a retry's backoff) to claimed by the attempt
+             *     that succeeded. Null when none completed.
+             */
+            wait_seconds: components["schemas"]["Durations"] | null;
+            /**
+             * @description For the completed messages: how long the attempt that succeeded ran, from
+             *     claimed to completed. Null when none completed.
+             */
+            run_seconds: components["schemas"]["Durations"] | null;
+        };
+        /**
+         * @description In seconds. The average and the maximum are exact; the median and the 95th
+         *     percentile are estimated from classes (below 1, 2, 5, 10, 30 seconds, 1, 2, 5, 10,
+         *     30 minutes, 1, 2, 6 hours, a day, and longer), interpolated within the class.
+         */
+        Durations: {
+            avg: number;
+            p50: number;
+            p95: number;
+            max: number;
         };
         /** @description RFC 9457 problem details, with a stable `code` to branch on. */
         Problem: {
@@ -1018,6 +1222,11 @@ export interface components {
         TenantId: components["schemas"]["TenantId"];
         /** @description Message id as returned by publish or claim. Opaque to clients. */
         MessageId: string;
+        /**
+         * @description How far back: `1h` in buckets of a minute, `6h` of 5 minutes, `24h` of 15 minutes,
+         *     `7d` of 2 hours.
+         */
+        Period: "1h" | "6h" | "24h" | "7d";
         Limit: number;
         /** @description The `next_cursor` of the previous page. */
         Cursor: string;
@@ -1034,9 +1243,18 @@ export interface operations {
     listMessages: {
         parameters: {
             query?: {
+                /** @description Only messages in this status; every status when left out. */
                 status?: components["schemas"]["MessageStatus"];
                 /** @description Only messages whose last error has this `type`. */
                 error_type?: string;
+                /**
+                 * @description A message id, or text to find in the body. An id finds that message and the
+                 *     messages whose body contains it. Text matches regardless of case, also where
+                 *     JSON escapes it in the stored body (a slash, a quote, an accented letter).
+                 *     A search reads the bodies of the queue's messages until the page is full, so
+                 *     on a large queue one that finds little takes longer.
+                 */
+                search?: string;
                 limit?: components["parameters"]["Limit"];
                 /** @description The `next_cursor` of the previous page. */
                 cursor?: components["parameters"]["Cursor"];
@@ -1421,6 +1639,33 @@ export interface operations {
                 };
             };
             400: components["responses"]["ValidationFailed"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    listWorkers: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Queue name, unique within the tenant. */
+                queue: components["parameters"]["QueueName"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The workers. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: components["schemas"]["Worker"][];
+                    };
+                };
+            };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
         };
@@ -1829,6 +2074,90 @@ export interface operations {
                 };
                 content?: never;
             };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    getMetrics: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The metrics. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/plain": string;
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    getHistory: {
+        parameters: {
+            query?: {
+                /**
+                 * @description How far back: `1h` in buckets of a minute, `6h` of 5 minutes, `24h` of 15 minutes,
+                 *     `7d` of 2 hours.
+                 */
+                period?: components["parameters"]["Period"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The history. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["History"];
+                };
+            };
+            400: components["responses"]["ValidationFailed"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    getQueueHistory: {
+        parameters: {
+            query?: {
+                /**
+                 * @description How far back: `1h` in buckets of a minute, `6h` of 5 minutes, `24h` of 15 minutes,
+                 *     `7d` of 2 hours.
+                 */
+                period?: components["parameters"]["Period"];
+            };
+            header?: never;
+            path: {
+                /** @description Queue name, unique within the tenant. */
+                queue: components["parameters"]["QueueName"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The history. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["History"];
+                };
+            };
+            400: components["responses"]["ValidationFailed"];
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];

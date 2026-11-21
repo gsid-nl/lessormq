@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
+import os
 import signal
 import socket
 import threading
@@ -72,7 +73,7 @@ class _Settings:
         max_seconds: float | None,
         error_pause: float,
     ) -> None:
-        self.consumer = consumer if consumer is not None else socket.gethostname() or None
+        self.consumer = consumer if consumer is not None else default_consumer()
         self.route = route
         self.wait_seconds = wait_seconds
         self.lease_seconds = lease_seconds
@@ -457,3 +458,9 @@ class AsyncWorker:
                 loop.remove_signal_handler(sig)
 
         return restore
+
+
+def default_consumer() -> str | None:
+    """The host and the process, so the workers on one host are told apart."""
+    host = socket.gethostname()
+    return f"{host}:{os.getpid()}" if host else None

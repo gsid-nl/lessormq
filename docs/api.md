@@ -230,7 +230,7 @@ Requires the `admin` scope.
 
 `GET /v1/queues/{queue}`
 
-Requires the `consume` or `admin` scope.
+Requires the `consume`, `metrics` or `admin` scope.
 
 | Parameter | In | Type | Description |
 |---|---|---|---|
@@ -265,6 +265,24 @@ Request body: [QueueSettingsPatch](#queuesettingspatch)
 | 401 | Missing, unknown or revoked API key. Code `unauthorized`. | [Problem](#problem) |
 | 403 | The key lacks the scope, the queue is outside its patterns, or a tenant key called an operator endpoint: code `forbidden`. The key's tenant is suspended: code `tenant_suspended`. | [Problem](#problem) |
 
+### The workers of a queue
+
+`GET /v1/queues/{queue}/workers`
+
+The workers that claimed from the queue in the last ten minutes and those that hold
+one of its messages, most recent claim first. A worker is told apart by the
+`consumer` it claims with. Requires the `consume`, `metrics` or `admin` scope.
+
+| Parameter | In | Type | Description |
+|---|---|---|---|
+| `queue` (required) | path | [QueueName](#queuename) | Queue name, unique within the tenant. |
+
+| Status | Meaning | Body |
+|---|---|---|
+| 200 | The workers. | object |
+| 401 | Missing, unknown or revoked API key. Code `unauthorized`. | [Problem](#problem) |
+| 403 | The key lacks the scope, the queue is outside its patterns, or a tenant key called an operator endpoint: code `forbidden`. The key's tenant is suspended: code `tenant_suspended`. | [Problem](#problem) |
+
 ## Messages
 
 Inspect, replay and delete messages, including the dead-letter set. Requires the `admin` scope.
@@ -273,13 +291,14 @@ Inspect, replay and delete messages, including the dead-letter set. Requires the
 
 `GET /v1/queues/{queue}/messages`
 
-Newest first. Paginated with an opaque cursor.
+Newest first. Paginated with an opaque cursor. The filters combine.
 
 | Parameter | In | Type | Description |
 |---|---|---|---|
 | `queue` (required) | path | [QueueName](#queuename) | Queue name, unique within the tenant. |
-| `status` | query | [MessageStatus](#messagestatus) |  |
+| `status` | query | [MessageStatus](#messagestatus) | Only messages in this status; every status when left out. |
 | `error_type` | query | string | Only messages whose last error has this `type`. |
+| `search` | query | string (up to 200 characters) | A message id, or text to find in the body. An id finds that message and the messages whose body contains it. Text matches regardless of case, also where JSON escapes it in the stored body (a slash, a quote, an accented letter). A search reads the bodies of the queue's messages until the page is full, so on a large queue one that finds little takes longer. |
 | `limit` | query | integer (min 1, max 100) |  |
 | `cursor` | query | string | The `next_cursor` of the previous page. |
 
@@ -608,6 +627,75 @@ Request body: [ApiKeyCreate](#apikeycreate)
 | 403 | The key lacks the scope, the queue is outside its patterns, or a tenant key called an operator endpoint: code `forbidden`. The key's tenant is suspended: code `tenant_suspended`. | [Problem](#problem) |
 | 404 | No such queue or message for this tenant. Code `not_found`. | [Problem](#problem) |
 
+## Metrics
+
+Queue health in the Prometheus text format. Requires the `metrics` or `admin` scope,
+or an operator key.
+
+### Prometheus metrics of the tenant's queues
+
+`GET /v1/metrics`
+
+Every queue of the tenant, as far as the key's queue patterns reach, idle ones with
+zeros. With an operator key: every tenant's queues, or one tenant's with the
+`LessorMQ-Tenant` header. A scraper holds a key with only the `metrics` scope.
+
+| Metric | |
+|---|---|
+| `lessormq_messages{tenant,queue,state}` | open messages: `ready`, `delayed`, `processing` |
+| `lessormq_dead_letter_messages{tenant,queue}` | messages in the dead-letter set |
+| `lessormq_oldest_ready_seconds{tenant,queue}` | how long the oldest ready message has waited |
+| `lessormq_oldest_processing_seconds{tenant,queue}` | how long the longest lease has been held |
+| `lessormq_max_retry_count{tenant,queue}` | the highest attempt count among open messages |
+| `lessormq_paused{tenant,queue}` | 1 while the queue is paused |
+| `lessormq_workers{tenant,queue}` | workers that claimed in the last minute or hold a message |
+
+| Status | Meaning | Body |
+|---|---|---|
+| 200 | The metrics. |  |
+| 401 | Missing, unknown or revoked API key. Code `unauthorized`. | [Problem](#problem) |
+| 403 | The key lacks the scope, the queue is outside its patterns, or a tenant key called an operator endpoint: code `forbidden`. The key's tenant is suspended: code `tenant_suspended`. | [Problem](#problem) |
+
+## Queue history
+
+What happened in the tenant's queues over a recent period, bucket by bucket, for
+charts. Requires the `metrics` or `admin` scope.
+
+### History of the tenant's queues
+
+`GET /v1/history`
+
+Every queue the key may use, added up. See [History](#history) for what is counted
+and how far back it reaches.
+
+| Parameter | In | Type | Description |
+|---|---|---|---|
+| `period` | query | string: `1h`, `6h`, `24h`, `7d` | How far back: `1h` in buckets of a minute, `6h` of 5 minutes, `24h` of 15 minutes, `7d` of 2 hours. |
+
+| Status | Meaning | Body |
+|---|---|---|
+| 200 | The history. | [History](#history) |
+| 400 | The request is malformed or a value is out of range. Code `validation_failed`. | [Problem](#problem) |
+| 401 | Missing, unknown or revoked API key. Code `unauthorized`. | [Problem](#problem) |
+| 403 | The key lacks the scope, the queue is outside its patterns, or a tenant key called an operator endpoint: code `forbidden`. The key's tenant is suspended: code `tenant_suspended`. | [Problem](#problem) |
+
+### History of a queue
+
+`GET /v1/queues/{queue}/history`
+
+| Parameter | In | Type | Description |
+|---|---|---|---|
+| `queue` (required) | path | [QueueName](#queuename) | Queue name, unique within the tenant. |
+| `period` | query | string: `1h`, `6h`, `24h`, `7d` | How far back: `1h` in buckets of a minute, `6h` of 5 minutes, `24h` of 15 minutes, `7d` of 2 hours. |
+
+| Status | Meaning | Body |
+|---|---|---|
+| 200 | The history. | [History](#history) |
+| 400 | The request is malformed or a value is out of range. Code `validation_failed`. | [Problem](#problem) |
+| 401 | Missing, unknown or revoked API key. Code `unauthorized`. | [Problem](#problem) |
+| 403 | The key lacks the scope, the queue is outside its patterns, or a tenant key called an operator endpoint: code `forbidden`. The key's tenant is suspended: code `tenant_suspended`. | [Problem](#problem) |
+| 404 | No such queue or message for this tenant. Code `not_found`. | [Problem](#problem) |
+
 ## System
 
 Liveness, no authentication.
@@ -864,10 +952,23 @@ Any subset of the queue settings; nested objects are merged.
 | `ready` (required) | integer | Pending and available now. |
 | `delayed` (required) | integer | Pending, available later (backoff or delay). |
 | `processing` (required) | integer |  |
-| `completed` (required) | integer | Completed and not yet removed by retention. |
+| `completed` (required) | integer | Completed and not yet removed by retention. Counted at most every 30 seconds (they can be many); the other figures are current. |
 | `failed` (required) | integer | The dead-letter set. |
 | `oldest_ready_seconds` (required) | integer | How long the oldest ready message has been waiting. Grows when no worker takes the queue. |
 | `oldest_processing_seconds` (required) | integer |  |
+| `workers` | integer | Workers that claimed from the queue in the last minute or hold one of its messages. |
+
+### Worker
+
+| Field | Type | Description |
+|---|---|---|
+| `consumer` (required) | string | The consumer name it claims with (host:pid by default in the client libraries); `(no name)` for claims without one. |
+| `last_claim_at` (required) | string or null (date-time) | Its last claim on this queue; null when it was seen only through a message it holds. |
+| `waiting` (required) | boolean | It is waiting for work on this queue now (a claim with `wait_seconds`). |
+| `processing` (required) | integer | Messages of this queue it holds now. |
+| `client` (required) | string or null | The User-Agent of its last claim, such as the client library and its version. |
+| `address` (required) | string or null | The address its last claim came from. |
+| `active` (required) | boolean | It claimed in the last minute or holds a message. |
 
 ### Queue
 
@@ -895,7 +996,7 @@ Any subset of the queue settings; nested objects are merged.
 
 ### Scope
 
-Type: string: `publish`, `consume`, `admin`
+Type: string: `publish`, `consume`, `metrics`, `admin`
 
 ### ApiKey
 
@@ -937,16 +1038,18 @@ Type: string: `active`, `suspended`, `deleting`
 
 ### Quotas
 
-Limits per tenant. `null` means unlimited. Exceeding a rate returns `429 rate_limited`.
+Limits per tenant, set by the operator. `null` means unlimited. A limit that lifts by
+itself (a rate, open messages) answers `429 rate_limited` with `Retry-After`; one that
+does not (the number of queues) answers `403 quota_exceeded`.
 
 | Field | Type | Description |
 |---|---|---|
-| `max_queues` | integer or null (min 1) |  |
-| `max_open_messages` | integer or null (min 1) | Pending plus processing, across all queues. Publishing beyond it returns 429. |
-| `publish_per_second` | integer or null (min 1) |  |
-| `claim_per_second` | integer or null (min 1) |  |
-| `max_message_bytes` | integer or null (min 1) | Upper bound for every queue's `max_message_bytes` in this tenant. |
-| `max_retention_seconds` | integer or null (min 0) | Upper bound for every queue's retention in this tenant. |
+| `max_queues` | integer or null (min 1) | Creating a queue beyond it, by publishing or by its settings, returns 403 `quota_exceeded`. |
+| `max_open_messages` | integer or null (min 1) | Pending plus processing, across all queues. Publishing beyond it returns 429. Checked against a count at most a few seconds old. |
+| `publish_per_second` | integer or null (min 1) | Publishes a second, in bursts of up to a second's worth. Beyond it, 429. |
+| `claim_per_second` | integer or null (min 1) | Claim requests a second (a waiting claim is one), in bursts of up to a second's worth. Beyond it, 429. |
+| `max_message_bytes` | integer or null (min 1) | Upper bound for every queue's `max_message_bytes` in this tenant: a higher setting is refused, and a queue is held to it. |
+| `max_retention_seconds` | integer or null (min 0) | Upper bound for every queue's retention in this tenant: a higher setting is refused, and a queue is held to it. |
 
 ### TenantUsage
 
@@ -998,6 +1101,50 @@ Only the fields present change. `id` cannot change. `deleting` is set by
 | `status` | string: `active`, `suspended` |  |
 | `quotas` | [Quotas](#quotas) |  |
 | `queue_defaults` | [QueueSettingsPatch](#queuesettingspatch) |  |
+
+### History
+
+Read back from the messages the server still keeps, so it reaches as far back as
+the queue's retention (completed messages are kept a day unless set otherwise)
+and leaves out messages that were deleted or discarded. The buckets are whole
+multiples of their size; the last one is the current bucket, so far. A result may
+be up to a tenth of a bucket old (10 seconds for `1h`, 5 minutes for `7d`).
+
+Times are stored to the second, so a duration is a whole number of seconds and
+work of less than a second mostly reads 0; the average stays true all the same.
+
+| Field | Type | Description |
+|---|---|---|
+| `queue` (required) | string or null | The queue, or null for every queue of the tenant. |
+| `period` (required) | string: `1h`, `6h`, `24h`, `7d` |  |
+| `bucket_seconds` (required) | integer |  |
+| `from` (required) | string (date-time) | The start of the first bucket. |
+| `to` (required) | string (date-time) | When the figures were read. |
+| `totals` (required) | [HistoryFigures](#historyfigures) |  |
+| `buckets` (required) | array of object + [HistoryFigures](#historyfigures) | Oldest first, every bucket of the period, empty ones too. |
+
+### HistoryFigures
+
+| Field | Type | Description |
+|---|---|---|
+| `published` (required) | integer | Messages published, as far as they are still kept. |
+| `completed` (required) | integer | Messages completed, counted when they completed. |
+| `dead_lettered` (required) | integer | Messages that went to the dead-letter set and are still there. |
+| `wait_seconds` (required) | [Durations](#durations) or null | For the completed messages: how long they waited for a worker, from available (published, or due again after a retry's backoff) to claimed by the attempt that succeeded. Null when none completed. |
+| `run_seconds` (required) | [Durations](#durations) or null | For the completed messages: how long the attempt that succeeded ran, from claimed to completed. Null when none completed. |
+
+### Durations
+
+In seconds. The average and the maximum are exact; the median and the 95th
+percentile are estimated from classes (below 1, 2, 5, 10, 30 seconds, 1, 2, 5, 10,
+30 minutes, 1, 2, 6 hours, a day, and longer), interpolated within the class.
+
+| Field | Type | Description |
+|---|---|---|
+| `avg` (required) | number |  |
+| `p50` (required) | number |  |
+| `p95` (required) | number |  |
+| `max` (required) | integer |  |
 
 ### Problem
 

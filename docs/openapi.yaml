@@ -52,6 +52,14 @@ tags:
     description: |
       Create and manage tenants, for a web interface or provisioning tool run by whoever
       operates the installation. Requires an operator key.
+  - name: Metrics
+    description: |
+      Queue health in the Prometheus text format. Requires the `metrics` or `admin` scope,
+      or an operator key.
+  - name: Queue history
+    description: |
+      What happened in the tenant's queues over a recent period, bucket by bucket, for
+      charts. Requires the `metrics` or `admin` scope.
   - name: System
     description: Liveness, no authentication.
 
@@ -106,10 +114,11 @@ paths:
       tags: [Messages]
       operationId: listMessages
       summary: List messages of a queue
-      description: Newest first. Paginated with an opaque cursor.
+      description: Newest first. Paginated with an opaque cursor. The filters combine.
       parameters:
         - name: status
           in: query
+          description: Only messages in this status; every status when left out.
           schema:
             $ref: '#/components/schemas/MessageStatus'
         - name: error_type
@@ -117,6 +126,17 @@ paths:
           description: Only messages whose last error has this `type`.
           schema:
             type: string
+        - name: search
+          in: query
+          description: |
+            A message id, or text to find in the body. An id finds that message and the
+            messages whose body contains it. Text matches regardless of case, also where
+            JSON escapes it in the stored body (a slash, a quote, an accented letter).
+            A search reads the bodies of the queue's messages until the page is full, so
+            on a large queue one that finds little takes longer.
+          schema:
+            type: string
+            maxLength: 200
         - $ref: '#/components/parameters/Limit'
         - $ref: '#/components/parameters/Cursor'
       responses:
@@ -411,7 +431,7 @@ paths:
       tags: [Queues]
       operationId: getQueue
       summary: Get a queue's settings and statistics
-      description: Requires the `consume` or `admin` scope.
+      description: Requires the `consume`, `metrics` or `admin` scope.
       responses:
         '200':
           description: The queue.
@@ -449,6 +469,35 @@ paths:
                 $ref: '#/components/schemas/Queue'
         '400':
           $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /v1/queues/{queue}/workers:
+    parameters:
+      - $ref: '#/components/parameters/QueueName'
+    get:
+      tags: [Queues]
+      operationId: listWorkers
+      summary: The workers of a queue
+      description: |
+        The workers that claimed from the queue in the last ten minutes and those that hold
+        one of its messages, most recent claim first. A worker is told apart by the
+        `consumer` it claims with. Requires the `consume`, `metrics` or `admin` scope.
+      responses:
+        '200':
+          description: The workers.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Worker'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -841,6 +890,86 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
 
+  /v1/metrics:
+    get:
+      tags: [Metrics]
+      operationId: getMetrics
+      summary: Prometheus metrics of the tenant's queues
+      description: |
+        Every queue of the tenant, as far as the key's queue patterns reach, idle ones with
+        zeros. With an operator key: every tenant's queues, or one tenant's with the
+        `LessorMQ-Tenant` header. A scraper holds a key with only the `metrics` scope.
+
+        | Metric | |
+        |---|---|
+        | `lessormq_messages{tenant,queue,state}` | open messages: `ready`, `delayed`, `processing` |
+        | `lessormq_dead_letter_messages{tenant,queue}` | messages in the dead-letter set |
+        | `lessormq_oldest_ready_seconds{tenant,queue}` | how long the oldest ready message has waited |
+        | `lessormq_oldest_processing_seconds{tenant,queue}` | how long the longest lease has been held |
+        | `lessormq_max_retry_count{tenant,queue}` | the highest attempt count among open messages |
+        | `lessormq_paused{tenant,queue}` | 1 while the queue is paused |
+        | `lessormq_workers{tenant,queue}` | workers that claimed in the last minute or hold a message |
+      responses:
+        '200':
+          description: The metrics.
+          content:
+            text/plain:
+              schema:
+                type: string
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /v1/history:
+    get:
+      tags: [Queue history]
+      operationId: getHistory
+      summary: History of the tenant's queues
+      description: |
+        Every queue the key may use, added up. See [History](#history) for what is counted
+        and how far back it reaches.
+      parameters:
+        - $ref: '#/components/parameters/Period'
+      responses:
+        '200':
+          description: The history.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/History'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /v1/queues/{queue}/history:
+    parameters:
+      - $ref: '#/components/parameters/QueueName'
+    get:
+      tags: [Queue history]
+      operationId: getQueueHistory
+      summary: History of a queue
+      parameters:
+        - $ref: '#/components/parameters/Period'
+      responses:
+        '200':
+          description: The history.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/History'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
   /healthz:
     get:
       tags: [System]
@@ -906,6 +1035,16 @@ components:
       description: Message id as returned by publish or claim. Opaque to clients.
       schema:
         type: string
+    Period:
+      name: period
+      in: query
+      description: |
+        How far back: `1h` in buckets of a minute, `6h` of 5 minutes, `24h` of 15 minutes,
+        `7d` of 2 hours.
+      schema:
+        type: string
+        enum: [1h, 6h, 24h, 7d]
+        default: 24h
     Limit:
       name: limit
       in: query
@@ -1449,7 +1588,9 @@ components:
           type: integer
         completed:
           type: integer
-          description: Completed and not yet removed by retention.
+          description: |
+            Completed and not yet removed by retention. Counted at most every 30 seconds
+            (they can be many); the other figures are current.
         failed:
           type: integer
           description: The dead-letter set.
@@ -1458,6 +1599,36 @@ components:
           description: How long the oldest ready message has been waiting. Grows when no worker takes the queue.
         oldest_processing_seconds:
           type: integer
+        workers:
+          type: integer
+          description: Workers that claimed from the queue in the last minute or hold one of its messages.
+
+    Worker:
+      type: object
+      required: [consumer, last_claim_at, waiting, processing, client, address, active]
+      properties:
+        consumer:
+          type: string
+          description: The consumer name it claims with (host:pid by default in the client libraries); `(no name)` for claims without one.
+        last_claim_at:
+          type: [string, 'null']
+          format: date-time
+          description: Its last claim on this queue; null when it was seen only through a message it holds.
+        waiting:
+          type: boolean
+          description: It is waiting for work on this queue now (a claim with `wait_seconds`).
+        processing:
+          type: integer
+          description: Messages of this queue it holds now.
+        client:
+          type: [string, 'null']
+          description: The User-Agent of its last claim, such as the client library and its version.
+        address:
+          type: [string, 'null']
+          description: The address its last claim came from.
+        active:
+          type: boolean
+          description: It claimed in the last minute or holds a message.
 
     Queue:
       type: object
@@ -1503,7 +1674,7 @@ components:
 
     Scope:
       type: string
-      enum: [publish, consume, admin]
+      enum: [publish, consume, metrics, admin]
 
     ApiKey:
       type: object
@@ -1576,29 +1747,41 @@ components:
 
     Quotas:
       type: object
-      description: Limits per tenant. `null` means unlimited. Exceeding a rate returns `429 rate_limited`.
+      description: |
+        Limits per tenant, set by the operator. `null` means unlimited. A limit that lifts by
+        itself (a rate, open messages) answers `429 rate_limited` with `Retry-After`; one that
+        does not (the number of queues) answers `403 quota_exceeded`.
       properties:
         max_queues:
           type: [integer, 'null']
           minimum: 1
+          description: Creating a queue beyond it, by publishing or by its settings, returns 403 `quota_exceeded`.
         max_open_messages:
           type: [integer, 'null']
           minimum: 1
-          description: Pending plus processing, across all queues. Publishing beyond it returns 429.
+          description: |
+            Pending plus processing, across all queues. Publishing beyond it returns 429.
+            Checked against a count at most a few seconds old.
         publish_per_second:
           type: [integer, 'null']
           minimum: 1
+          description: Publishes a second, in bursts of up to a second's worth. Beyond it, 429.
         claim_per_second:
           type: [integer, 'null']
           minimum: 1
+          description: Claim requests a second (a waiting claim is one), in bursts of up to a second's worth. Beyond it, 429.
         max_message_bytes:
           type: [integer, 'null']
           minimum: 1
-          description: Upper bound for every queue's `max_message_bytes` in this tenant.
+          description: |
+            Upper bound for every queue's `max_message_bytes` in this tenant: a higher setting
+            is refused, and a queue is held to it.
         max_retention_seconds:
           type: [integer, 'null']
           minimum: 0
-          description: Upper bound for every queue's retention in this tenant.
+          description: |
+            Upper bound for every queue's retention in this tenant: a higher setting is
+            refused, and a queue is held to it.
 
     TenantUsage:
       type: object
@@ -1682,6 +1865,97 @@ components:
           $ref: '#/components/schemas/Quotas'
         queue_defaults:
           $ref: '#/components/schemas/QueueSettingsPatch'
+
+    History:
+      type: object
+      description: |
+        Read back from the messages the server still keeps, so it reaches as far back as
+        the queue's retention (completed messages are kept a day unless set otherwise)
+        and leaves out messages that were deleted or discarded. The buckets are whole
+        multiples of their size; the last one is the current bucket, so far. A result may
+        be up to a tenth of a bucket old (10 seconds for `1h`, 5 minutes for `7d`).
+
+        Times are stored to the second, so a duration is a whole number of seconds and
+        work of less than a second mostly reads 0; the average stays true all the same.
+      required: [queue, period, bucket_seconds, from, to, totals, buckets]
+      properties:
+        queue:
+          type: [string, 'null']
+          description: The queue, or null for every queue of the tenant.
+        period:
+          type: string
+          enum: [1h, 6h, 24h, 7d]
+        bucket_seconds:
+          type: integer
+        from:
+          type: string
+          format: date-time
+          description: The start of the first bucket.
+        to:
+          type: string
+          format: date-time
+          description: When the figures were read.
+        totals:
+          $ref: '#/components/schemas/HistoryFigures'
+        buckets:
+          type: array
+          description: Oldest first, every bucket of the period, empty ones too.
+          items:
+            allOf:
+              - type: object
+                required: [at]
+                properties:
+                  at:
+                    type: string
+                    format: date-time
+                    description: The start of the bucket.
+              - $ref: '#/components/schemas/HistoryFigures'
+
+    HistoryFigures:
+      type: object
+      required: [published, completed, dead_lettered, wait_seconds, run_seconds]
+      properties:
+        published:
+          type: integer
+          description: Messages published, as far as they are still kept.
+        completed:
+          type: integer
+          description: Messages completed, counted when they completed.
+        dead_lettered:
+          type: integer
+          description: Messages that went to the dead-letter set and are still there.
+        wait_seconds:
+          description: |
+            For the completed messages: how long they waited for a worker, from available
+            (published, or due again after a retry's backoff) to claimed by the attempt
+            that succeeded. Null when none completed.
+          oneOf:
+            - $ref: '#/components/schemas/Durations'
+            - type: 'null'
+        run_seconds:
+          description: |
+            For the completed messages: how long the attempt that succeeded ran, from
+            claimed to completed. Null when none completed.
+          oneOf:
+            - $ref: '#/components/schemas/Durations'
+            - type: 'null'
+
+    Durations:
+      type: object
+      description: |
+        In seconds. The average and the maximum are exact; the median and the 95th
+        percentile are estimated from classes (below 1, 2, 5, 10, 30 seconds, 1, 2, 5, 10,
+        30 minutes, 1, 2, 6 hours, a day, and longer), interpolated within the class.
+      required: [avg, p50, p95, max]
+      properties:
+        avg:
+          type: number
+        p50:
+          type: number
+        p95:
+          type: number
+        max:
+          type: integer
 
     Problem:
       type: object

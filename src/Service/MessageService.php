@@ -32,6 +32,9 @@ class MessageService
         private readonly MessageCreator $messageCreator,
         private readonly QueueSettingsService $queueSettings,
         private readonly LeaseKeeper $leaseKeeper,
+        private readonly QuotaService $quotas,
+        private readonly ClaimWaiter $waiter,
+        private readonly WorkerRegistry $workers,
         private readonly LoggerInterface $logger,
     ) {
     }
@@ -69,7 +72,9 @@ class MessageService
             throw ApiProblem::payloadTooLarge($config->int('max_message_bytes'));
         }
 
+        // A queue the tenant has no room for is refused first: waiting would not help.
         $this->queueSettings->ensureExists($tenant, $queue);
+        $this->quotas->beforePublish($tenant, $config);
 
         if ($delay !== null && $delay > 0) {
             $availableAt = new DateTimeImmutable('+' . $delay . ' seconds', Utc::zone());
@@ -93,6 +98,11 @@ class MessageService
             },
             $dedupKey,
         );
+
+        if (!$duplicate) {
+            $this->quotas->afterPublish($tenant, $config);
+            $this->waiter->notify($tenant, $queue);
+        }
 
         return [
             'id' => $message->getId()->toString(),
@@ -118,40 +128,71 @@ class MessageService
         $input->validate();
 
         $config = $this->queueSettings->forQueue($tenant, $queue);
+        $this->quotas->beforeClaim($tenant, $config);
+        $this->workers->claimed($tenant, $queue, $consumer);
         $lease = min($leaseSeconds ?? $config->int('lease_seconds'), $config->int('max_lease_seconds'));
         $deadline = microtime(true) + ($wait ?? 0);
         $swept = false;
 
-        // Waiting checks for work once a second. Each waiting claim holds a PHP worker,
-        // so this is the simple form of long polling; a Redis wake-up replaces it later.
-        while (true) {
-            if (!$config->isPaused()) {
-                if (!$swept) {
-                    $this->leaseKeeper->sweepIfDue($tenant, $queue, $config);
-                    $swept = true;
+        // A claim that finds nothing waits for a wake-up (ClaimWaiter): a publish, retry,
+        // release or replay on this queue, or the time the next delayed message is due.
+        // Each waiting claim holds a PHP worker for as long as it waits, so a node lets
+        // only so many wait at once. Past that a claim waits at most a second: its worker
+        // comes free soon, and its client claims again a second later rather than at once.
+        $waiting = null;
+        $capped = false;
+
+        try {
+            while (true) {
+                if (!$config->isPaused()) {
+                    if (!$swept) {
+                        $this->leaseKeeper->sweepIfDue($tenant, $queue, $config);
+                        $swept = true;
+                    }
+
+                    $message = $this->messages->claimNextMessage(
+                        $tenant,
+                        $queue,
+                        $consumer,
+                        $route,
+                        Route::avoidance($route, $config),
+                        $lease,
+                    );
+
+                    if ($message !== null) {
+                        return $this->lease($message, $config);
+                    }
                 }
 
-                $message = $this->messages->claimNextMessage(
-                    $tenant,
-                    $queue,
-                    $consumer,
-                    $route,
-                    Route::avoidance($route, $config),
-                    $lease,
-                );
+                $remaining = $deadline - microtime(true);
 
-                if ($message !== null) {
-                    return $this->lease($message, $config);
+                if ($remaining <= 0) {
+                    return null;
+                }
+
+                if ($waiting === null && !$capped) {
+                    $id = bin2hex(random_bytes(8));
+
+                    if ($this->waiter->enter($id, $deadline)) {
+                        $waiting = $id;
+                        $this->workers->waiting($tenant, $queue, $consumer, $deadline);
+                    } else {
+                        $capped = true;
+                        $deadline = min($deadline, microtime(true) + 1.0);
+                        $remaining = $deadline - microtime(true);
+                    }
+                }
+
+                if ($this->waiter->wait($tenant, $queue, $this->untilDue($tenant, $queue, $config, $remaining))) {
+                    // Woken: perhaps by a resume, which this request's settings do not know of.
+                    $config = $config->isPaused() ? $this->queueSettings->reload($tenant, $queue) : $config;
                 }
             }
-
-            $remaining = $deadline - microtime(true);
-
-            if ($remaining <= 0) {
-                return null;
+        } finally {
+            if ($waiting !== null) {
+                $this->waiter->leave($waiting);
+                $this->workers->doneWaiting($tenant, $queue, $consumer);
             }
-
-            usleep((int) (min(1.0, $remaining) * 1_000_000));
         }
     }
 
@@ -269,6 +310,10 @@ class MessageService
             throw ApiProblem::leaseLost();
         }
 
+        if ($decision['outcome'] === FailurePolicy::RETRYING) {
+            $this->waiter->notify($tenant, $state['queue']);
+        }
+
         $this->logger->info('Message failed', [
             'message_id' => $id,
             'outcome' => $decision['outcome'],
@@ -308,6 +353,31 @@ class MessageService
         if (!$done) {
             throw ApiProblem::leaseLost();
         }
+
+        $this->waiter->notify($tenant, $message->getQueue());
+    }
+
+    /**
+     * How long a claim that found nothing may wait: until its time is up, or until the
+     * queue's next delayed message is due, whichever comes first. A paused queue has
+     * nothing to wait for but the time.
+     */
+    private function untilDue(string $tenant, string $queue, QueueConfig $config, float $remaining): float
+    {
+        if ($config->isPaused()) {
+            return $remaining;
+        }
+
+        $next = $this->messages->nextAvailableAt($tenant, $queue, Utc::now());
+
+        if ($next === null) {
+            return $remaining;
+        }
+
+        // Stored to the second: a little after, so the message is due when the claim runs.
+        $due = (float) $next->getTimestamp() - microtime(true) + 0.05;
+
+        return max(0.05, min($remaining, $due));
     }
 
     /**

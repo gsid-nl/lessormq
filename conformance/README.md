@@ -52,7 +52,8 @@ steps:
 ```
 
 Every step has one action, an optional `save` and an optional `expect`. Any step takes
-`tenant: b` to act as the second tenant.
+`tenant: b` to act as the second tenant, `key: $saved.body.secret` to use a key from an
+`api_key` step, or `operator: true` to use the operator key.
 
 | Action | Through | Arguments |
 |---|---|---|
@@ -60,15 +61,26 @@ Every step has one action, an optional `save` and an optional `expect`. Any step
 | `claim` | adapter | `queue`, `consumer`, `route`, `lease_seconds`, `wait_seconds`; `publish_after: {seconds, body}` publishes from another process while the claim waits |
 | `extend`, `ack`, `fail`, `release` | adapter | `lease` (a saved claim; supplies `message` and `receipt`), `receipt` or `message` to override, `lease_seconds`, `error`, `permanent`, `delay_seconds` |
 | `settings` | admin API | `queue`, `set`: a queue settings patch |
+| `publish_http`, `claim_http` | plain HTTP, also when a client library runs the suite | as `publish` and `claim`: for answers a library hides, such as a 429 it waits out |
 | `queue`, `message`, `replay` | admin API | `queue`; `id` |
+| `messages` | admin API | `queue`, and the list's filters: `status`, `error_type`, `search`, `limit` |
+| `replay_all`, `purge` | admin API | `queue`, `status`, `error_type`, `before`, `limit` |
+| `tenant` | admin API | (the tenant's own record and usage) |
+| `workers` | admin API | `queue`: the queue's list of workers |
+| `api_key` | admin API | `name`, `scopes`, `queues`: a new key of the tenant |
+| `metrics`, `tenant_metrics` | `/metrics`, `/v1/metrics` | |
+| `history`, `tenant_history` | admin API | `queue` (for `history`), `period` |
 | `sleep` | runner | seconds |
 
-A result is `{status, body, elapsed}`. `$name.path` anywhere in a step or an
+A result is `{status, body, headers, elapsed}` (header names in lower case).
+
+A scenario with `tenant_quotas:` runs in a tenant of its own, created with those quotas,
+as tenant `a`; so does one with `own_tenant: true`, without quotas. `$name.path` anywhere in a step or an
 expectation is replaced by that path in a saved result.
 
 Expectations map a dotted path to a literal (compared by value and type) or to one
 matcher: `not`, `between: [low, high]`, `seconds_from_now: [low, high]`, `matches`
-(a regular expression), `exists: true|false`, `keys: [...]`.
+(a regular expression), `not_matches`, `exists: true|false`, `keys: [...]`.
 
 ## Client libraries
 

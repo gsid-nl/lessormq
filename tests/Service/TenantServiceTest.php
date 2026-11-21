@@ -11,6 +11,7 @@ use App\Entity\Enum\TenantStatus;
 use App\Entity\Tenant;
 use App\Repository\ApiKeyRepository;
 use App\Repository\MessageRepository;
+use App\Repository\QueueRepository;
 use App\Repository\TenantRepository;
 use App\Security\ApiKeyFactory;
 use App\Service\ApiKeyService;
@@ -40,6 +41,7 @@ class TenantServiceTest extends TestCase
             $messages,
             new ApiKeyService($this->apiKeys),
             $this->createMock(QueueSettingsService::class),
+            $this->createStub(QueueRepository::class),
         );
     }
 

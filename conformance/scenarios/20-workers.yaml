@@ -1,0 +1,20 @@
+name: A queue lists its workers by the consumer they claim with, and what they hold
+steps:
+  - publish: {body: {n: 1}}
+  - claim: {consumer: worker-a}
+    save: lease
+  - workers: {}
+    expect:
+      status: 200
+      body.items.0.consumer: worker-a
+      body.items.0.processing: 1
+      body.items.0.active: true
+      body.items.0.last_claim_at: {matches: 'Z$'}
+      body.items.1: {exists: false}
+  - queue: {}
+    expect: {body.stats.workers: 1}
+  - ack: {lease: $lease}
+  - workers: {}
+    expect: {body.items.0.consumer: worker-a, body.items.0.processing: 0, body.items.0.waiting: false}
+  - workers: {tenant: b}
+    expect: {status: 200, body.items.0: {exists: false}}

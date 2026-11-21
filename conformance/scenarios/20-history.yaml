@@ -1,0 +1,43 @@
+name: A queue's history counts what was published, completed and dead-lettered, and how long the work ran
+own_tenant: true
+queues:
+  main: {max_attempts: 1}
+  other: {}
+steps:
+  - publish: {body: {n: 1}}
+  - publish: {body: {n: 2}}
+  - publish: {body: {n: 3}}
+  - publish: {queue: other, body: {}}
+  - claim: {}
+    save: l1
+  - sleep: 1.2
+  - ack: {lease: $l1}
+  - claim: {}
+    save: l2
+  - fail: {lease: $l2, error: {type: Broken, message: for good}}
+    expect: {status: 200, body.outcome: dead_lettered}
+  - history: {period: 1h}
+    expect:
+      status: 200
+      body.period: 1h
+      body.bucket_seconds: 60
+      body.buckets.59.at: {seconds_from_now: [-61, 0]}
+      body.totals.published: 3
+      body.totals.completed: 1
+      body.totals.dead_lettered: 1
+      body.totals.run_seconds.max: {between: [1, 2]}
+      body.totals.wait_seconds.max: {between: [0, 1]}
+  - tenant_history: {period: 1h}
+    expect: {status: 200, body.queue: null, body.totals.published: 4, body.totals.completed: 1}
+  - history: {period: 2h}
+    expect: {status: 400}
+  - history: {queue: none}
+    expect: {status: 404}
+  - api_key: {name: scraper, scopes: [metrics]}
+    save: scraper
+  - history: {key: $scraper.body.secret}
+    expect: {status: 200, body.period: 24h, body.bucket_seconds: 900, body.totals.published: 3}
+  - api_key: {name: worker, scopes: [consume]}
+    save: worker
+  - tenant_history: {key: $worker.body.secret}
+    expect: {status: 403}

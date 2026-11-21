@@ -1,0 +1,16 @@
+# With compose.yaml: the server on PostgreSQL instead of MariaDB.
+#   docker compose -f compose.yaml -f compose.postgresql.yaml up -d --wait
+services:
+  db:
+    image: postgres:17-alpine
+    environment: !override
+      POSTGRES_PASSWORD: lessormq
+      POSTGRES_DB: lessormq
+    healthcheck: !override
+      test: ["CMD", "pg_isready", "-U", "postgres", "-d", "lessormq"]
+      interval: 2s
+      retries: 30
+
+  app:
+    environment:
+      DATABASE_QUEUE_URL: postgresql://postgres:lessormq@db:5432/lessormq?serverVersion=17&charset=utf8

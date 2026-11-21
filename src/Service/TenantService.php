@@ -14,6 +14,7 @@ use App\Model\QueueSettings;
 use App\Model\Quotas;
 use App\Repository\ApiKeyRepository;
 use App\Repository\MessageRepository;
+use App\Repository\QueueRepository;
 use App\Repository\TenantRepository;
 use App\Security\ApiKeyFactory;
 
@@ -25,6 +26,7 @@ class TenantService
         private readonly MessageRepository $messages,
         private readonly ApiKeyService $apiKeyService,
         private readonly QueueSettingsService $queueSettings,
+        private readonly QueueRepository $queues,
     ) {
     }
 
@@ -138,7 +140,8 @@ class TenantService
 
         $this->tenants->save($tenant);
 
-        if ($input->has('queue_defaults')) {
+        // Cached queue settings carry the tenant's defaults and quotas.
+        if ($input->has('queue_defaults') || $input->has('quotas')) {
             $this->queueSettings->invalidateTenant($tenant->getId());
         }
     }
@@ -151,9 +154,15 @@ class TenantService
         $input->allowOnly('queue_defaults');
 
         if ($input->has('queue_defaults')) {
-            $input->addErrors(QueueSettings::validatePatch(
+            $errors = QueueSettings::validatePatch(
                 $input->raw('queue_defaults'),
                 $tenant->getQueueDefaults(),
+                'queue_defaults.',
+            );
+            // Within the quotas the operator set; queues are held to them anyway.
+            $input->addErrors($errors !== [] ? $errors : Quotas::settingErrors(
+                $input->raw('queue_defaults'),
+                $tenant->getQuotas(),
                 'queue_defaults.',
             ));
         }
@@ -192,7 +201,7 @@ class TenantService
             'status' => $tenant->getStatus()->value,
             'quotas' => $tenant->getQuotas(),
             'queue_defaults' => $tenant->getQueueDefaults(),
-            'usage' => $this->messages->tenantUsage($tenant->getId()),
+            'usage' => $this->messages->tenantUsage($tenant->getId(), $this->queues->names($tenant->getId())),
             'created_at' => Time::format($tenant->getCreatedAt()),
             'suspended_at' => Time::format($tenant->getSuspendedAt()),
         ];

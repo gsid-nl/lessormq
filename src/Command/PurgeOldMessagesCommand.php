@@ -7,6 +7,7 @@ namespace App\Command;
 use App\Entity\Enum\MessageStatus;
 use App\Repository\MessageRepository;
 use App\Service\QueueSettingsService;
+use App\Service\QueueStatsService;
 use App\Time\Utc;
 use Psr\Log\LoggerInterface;
 use Symfony\Component\Console\Attribute\AsCommand;
@@ -30,6 +31,7 @@ class PurgeOldMessagesCommand extends Command
     public function __construct(
         private readonly MessageRepository $messages,
         private readonly QueueSettingsService $queueSettings,
+        private readonly QueueStatsService $queueStats,
         private readonly LoggerInterface $logger,
     ) {
         parent::__construct();
@@ -74,6 +76,10 @@ class PurgeOldMessagesCommand extends Command
                     $batch = $this->messages->purgeBatch($tenant, $queue, $status, $before, $batchSize);
                     $deleted += $batch;
                 } while ($batch >= $batchSize);
+
+                if ($deleted > 0 && $status === MessageStatus::COMPLETED) {
+                    $this->queueStats->forget($tenant, $queue);
+                }
 
                 if ($deleted > 0) {
                     $output->writeln(sprintf(

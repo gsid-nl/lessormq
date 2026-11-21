@@ -1,0 +1,26 @@
+name: The message list finds a message by its id or by text in its body
+steps:
+  - publish: {body: {order: A-1001, note: 'Customer said: "ship to https://example.com/drop"'}}
+    save: a
+  - publish: {body: {order: B-2002, about: $a.body.id}}
+    save: b
+  - publish: {body: {order: C-3003, city: Zürich}}
+    save: c
+  - messages: {search: b-2002}
+    expect: {status: 200, body.items.0.id: $b.body.id, body.items.1: {exists: false}}
+  - messages: {search: example.com/drop}
+    expect: {body.items.0.id: $a.body.id, body.items.1: {exists: false}}
+  - messages: {search: 'said: "ship'}
+    expect: {body.items.0.id: $a.body.id, body.items.1: {exists: false}}
+  - messages: {search: zürich}
+    expect: {body.items.0.id: $c.body.id, body.items.1: {exists: false}}
+  - messages: {search: $a.body.id}
+    expect: {body.items.0.id: $b.body.id, body.items.1.id: $a.body.id, body.items.2: {exists: false}}
+  - messages: {search: 100%}
+    expect: {body.items.0: {exists: false}}
+  - messages: {search: A-1001, status: completed}
+    expect: {body.items.0: {exists: false}}
+  - messages: {search: A-1001, status: pending}
+    expect: {body.items.0.id: $a.body.id}
+  - messages: {search: nowhere}
+    expect: {status: 200, body.items.0: {exists: false}, body.next_cursor: null}

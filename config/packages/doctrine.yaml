@@ -4,7 +4,8 @@ doctrine:
         mapping_types:
             enum: string
         types:
-            uuid_binary_ordered_time: Ramsey\Uuid\Doctrine\UuidBinaryOrderedTimeType
+            # ramsey's type, also read from the stream PostgreSQL returns
+            uuid_binary_ordered_time: App\Doctrine\OrderedTimeUuidType
             utc_datetime_immutable: App\Doctrine\UtcDateTimeImmutableType
 
     orm:

@@ -55,7 +55,7 @@ Worker(client, "mail", send, route=os.environ.get("VPN_ID")).run()
   by then.
 - SIGTERM and SIGINT stop the worker after the current message.
 
-`Worker` options: `consumer` (the host name by default), `route`, `wait_seconds` (20),
+`Worker` options: `consumer` (host:pid by default), `route`, `wait_seconds` (20),
 `lease_seconds`, `extend_every`, `auto_extend`, `handle_signals`, `max_messages`,
 `max_seconds`, `error_pause`.
 
