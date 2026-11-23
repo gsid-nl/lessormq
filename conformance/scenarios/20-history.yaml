@@ -37,6 +37,11 @@ steps:
       body.totals.published: {between: [4, 1000000000]}
       body.totals.dead_lettered: {between: [1, 1000000000]}
       body.totals.run_seconds.max: {between: [1, 1000000]}
+  # Only the tenants named: this scenario's own, and one that does not exist.
+  - tenant_history: {operator: true, period: 1h, tenants: [a, no-such-tenant]}
+    expect: {status: 200, body.totals.published: 4, body.totals.completed: 1, body.totals.dead_lettered: 1}
+  - tenant_history: {operator: true, period: 1h, tenants: []}
+    expect: {status: 200, body.totals.published: 0}
   - history: {period: 2h}
     expect: {status: 400}
   - history: {queue: none}

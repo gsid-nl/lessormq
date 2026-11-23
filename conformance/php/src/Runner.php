@@ -242,7 +242,9 @@ final class Runner
                 '/v1/queues/' . $args['queue'] . '/history?'
                     . http_build_query(array_diff_key($args, ['queue' => true])),
             ),
-            $name === 'tenant_history' => $this->admin($key, 'GET', '/v1/history?' . http_build_query($args)),
+            $name === 'tenant_history' => $this->admin($key, 'GET', '/v1/history?' . http_build_query(
+                $this->tenantIds($args),
+            )),
             $name === 'api_key' => $this->admin($key, 'POST', '/v1/api-keys', $args),
             // Plain HTTP, for answers a library may give before asking the server.
             $name === 'ack_batch_http' => $this->admin($key, 'POST', '/v1/acks', $args),
@@ -327,6 +329,24 @@ final class Runner
     /**
      * @return array{status: int, body: mixed}
      */
+    /**
+     * The scenario names tenants by their letter; LessorMQ by their id.
+     *
+     * @param array<string, mixed> $args
+     * @return array<string, mixed>
+     */
+    private function tenantIds(array $args): array
+    {
+        if (isset($args['tenants']) && is_array($args['tenants'])) {
+            $args['tenants'] = implode(',', array_map(
+                fn (string $name) => $this->tenants[$name]['id'] ?? $name,
+                $args['tenants'],
+            ));
+        }
+
+        return $args;
+    }
+
     private function admin(string $key, string $method, string $path, mixed $body = null): array
     {
         return $this->http->request($method, $path, $body, ['Authorization' => 'Bearer ' . $key]);

@@ -165,6 +165,9 @@ func TestEveryMessagesQueryFiltersOnTenant(t *testing.T) {
 	if status, _ := c.call(operator, "GET", "/v1/history", nil, ""); status != 200 {
 		t.Fatalf("operator history: %d", status)
 	}
+	if status, _ := c.call(operator, "GET", "/v1/history?tenants=ta,tb", nil, ""); status != 200 {
+		t.Fatalf("operator history of some tenants: %d", status)
+	}
 	if status, _ := c.call(operator, "GET", "/v1/tenants/ta", nil, ""); status != 200 {
 		t.Fatalf("operator tenant: %d", status)
 	}

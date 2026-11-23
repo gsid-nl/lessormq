@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gsid-nl/lessormq/server/internal/app"
@@ -73,6 +74,9 @@ func (s *Server) history(ctx context.Context, r *request) (int, any, error) {
 		if err != nil {
 			return 0, nil, err
 		}
+		if only := r.queryPtr("tenants"); only != nil {
+			tenants = onlyTenants(tenants, *only)
+		}
 		for _, t := range tenants {
 			if queues[t], err = s.App.QueueNames(ctx, t); err != nil {
 				return 0, nil, err
@@ -103,6 +107,24 @@ func (s *Server) history(ctx context.Context, r *request) (int, any, error) {
 	}
 	queues[tenant] = names
 	return s.historyResult(ctx, nil, queues, per)
+}
+
+// onlyTenants keeps the tenants named in a comma-separated list, in their own order. An
+// unknown name is left out, as is a tenant being deleted; an empty list keeps none.
+func onlyTenants(tenants []string, list string) []string {
+	named := map[string]bool{}
+	for _, t := range strings.Split(list, ",") {
+		if t = strings.TrimSpace(t); t != "" {
+			named[t] = true
+		}
+	}
+	kept := []string{}
+	for _, t := range tenants {
+		if named[t] {
+			kept = append(kept, t)
+		}
+	}
+	return kept
 }
 
 func (s *Server) historyResult(ctx context.Context, queue any, queues map[string][]string, per string) (int, any, error) {

@@ -588,9 +588,10 @@ export interface paths {
         /**
          * History of the tenant's queues
          * @description Every queue the key may use, added up. With an operator key: every tenant's queues
-         *     together, or one tenant's with the `LessorMQ-Tenant` header; the durations are
-         *     merged before the percentiles are read, so they are those of all the messages. See
-         *     [History](#history) for what is counted and how far back it reaches.
+         *     together, those of the tenants named in `tenants`, or one tenant's with the
+         *     `LessorMQ-Tenant` header; the durations are merged before the percentiles are
+         *     read, so they are those of all the messages. See [History](#history) for what is
+         *     counted and how far back it reaches.
          */
         get: operations["getHistory"];
         put?: never;
@@ -2192,6 +2193,14 @@ export interface operations {
                  *     `7d` of 2 hours.
                  */
                 period?: components["parameters"]["Period"];
+                /**
+                 * @description Operator key without the `LessorMQ-Tenant` header only: the tenants to add up,
+                 *     comma-separated. An unknown tenant counts for nothing, and an empty list for
+                 *     none, so the answer is all zeros. Without it, every tenant. Ignored for a
+                 *     tenant key.
+                 * @example acme,globex
+                 */
+                tenants?: string;
             };
             header?: never;
             path?: never;

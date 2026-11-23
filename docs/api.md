@@ -694,13 +694,15 @@ charts. Requires the `metrics` or `admin` scope, or an operator key.
 `GET /v1/history`
 
 Every queue the key may use, added up. With an operator key: every tenant's queues
-together, or one tenant's with the `LessorMQ-Tenant` header; the durations are
-merged before the percentiles are read, so they are those of all the messages. See
-[History](#history) for what is counted and how far back it reaches.
+together, those of the tenants named in `tenants`, or one tenant's with the
+`LessorMQ-Tenant` header; the durations are merged before the percentiles are
+read, so they are those of all the messages. See [History](#history) for what is
+counted and how far back it reaches.
 
 | Parameter | In | Type | Description |
 |---|---|---|---|
 | `period` | query | string: `1h`, `6h`, `24h`, `7d` | How far back: `1h` in buckets of a minute, `6h` of 5 minutes, `24h` of 15 minutes, `7d` of 2 hours. |
+| `tenants` | query | string | Operator key without the `LessorMQ-Tenant` header only: the tenants to add up, comma-separated. An unknown tenant counts for nothing, and an empty list for none, so the answer is all zeros. Without it, every tenant. Ignored for a tenant key. |
 
 | Status | Meaning | Body |
 |---|---|---|
