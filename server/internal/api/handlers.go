@@ -287,7 +287,20 @@ func (s *Server) revokeTenantKey(ctx context.Context, r *request) (int, any, err
 	return http.StatusNoContent, nil, s.App.RevokeKey(ctx, t.ID, r.param("keyId"), r.principal.KeyID)
 }
 
+// listQueues: a tenant's queues, or for an operator key without the LessorMQ-Tenant
+// header every tenant's (?tenants=a,b for some), each with its tenant.
 func (s *Server) listQueues(ctx context.Context, r *request) (int, any, error) {
+	if p := r.principal; p.Operator && p.TenantID == "" {
+		tenants, err := s.App.TenantIDs(ctx)
+		if err != nil {
+			return 0, nil, err
+		}
+		if only := r.queryPtr("tenants"); only != nil {
+			tenants = onlyTenants(tenants, *only)
+		}
+		v, err := s.App.ListQueuesOf(ctx, tenants)
+		return 200, v, err
+	}
 	v, err := s.App.ListQueues(ctx, r.principal)
 	return 200, v, err
 }

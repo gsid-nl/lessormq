@@ -271,7 +271,8 @@ export interface paths {
         };
         /**
          * List the tenant's queues
-         * @description Requires the `admin` scope.
+         * @description Requires the `admin` scope. With an operator key and no `LessorMQ-Tenant` header,
+         *     the queues of every tenant, each with its `tenant`.
          */
         get: operations["listQueues"];
         put?: never;
@@ -979,6 +980,8 @@ export interface components {
             stats: components["schemas"]["QueueStats"];
             /** Format: date-time */
             paused_at?: string | null;
+            /** @description Only in a list of several tenants' queues (an operator key's). */
+            tenant?: components["schemas"]["TenantId"];
         };
         BulkFilter: {
             /** @enum {string} */
@@ -1160,9 +1163,11 @@ export interface components {
             run_seconds: components["schemas"]["Durations"] | null;
         };
         /**
-         * @description In seconds. The average and the maximum are exact; the median and the 95th
-         *     percentile are estimated from classes (below 1, 2, 5, 10, 30 seconds, 1, 2, 5, 10,
-         *     30 minutes, 1, 2, 6 hours, a day, and longer), interpolated within the class.
+         * @description In seconds, to the millisecond. The average and the maximum are exact; the median
+         *     and the 95th percentile are estimated from classes (below 5, 10, 25, 50, 100, 250,
+         *     500 milliseconds, 1, 2, 5, 10, 30 seconds, 1, 2, 5, 10, 30 minutes, 1, 2, 6 hours,
+         *     a day, and longer), interpolated within the class. Messages from before LessorMQ
+         *     kept milliseconds count in whole seconds.
          */
         Durations: {
             avg: number;
@@ -1649,14 +1654,22 @@ export interface operations {
     };
     listQueues: {
         parameters: {
-            query?: never;
+            query?: {
+                /**
+                 * @description Operator key without the `LessorMQ-Tenant` header only: the tenants whose
+                 *     queues to list, comma-separated. An unknown tenant has none, and an empty list
+                 *     lists none. Without it, every tenant. Ignored for a tenant key.
+                 * @example acme,globex
+                 */
+                tenants?: string;
+            };
             header?: never;
             path?: never;
             cookie?: never;
         };
         requestBody?: never;
         responses: {
-            /** @description All queues of the tenant, with settings and statistics. */
+            /** @description All queues of the tenant (or the tenants), with settings and statistics. */
             200: {
                 headers: {
                     [name: string]: unknown;

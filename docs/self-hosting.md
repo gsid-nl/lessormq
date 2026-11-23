@@ -79,11 +79,16 @@ postgresql://user:password@host:5432/lessormq
 sqlite:////var/lib/lessormq/lessormq.db
 ```
 
-The schema is the same as that of LessorMQ 0.3 and before (the PHP server), and so is the
+The schema started as that of LessorMQ 0.3 and before (the PHP server), and so did the
 record of its migrations (`doctrine_migration_versions`): an installation of 0.3 moves to
-this server as it is. A database that stopped at an older schema than 0.3's is upgraded
-with 0.3 first. On SQLite the file uses write-ahead logging, so reading does not wait for
-writing.
+this server as it is, and gets the migrations since when it starts. A database that
+stopped at an older schema than 0.3's is upgraded with 0.3 first. On SQLite the file uses
+write-ahead logging, so reading does not wait for writing.
+
+Since 0.3, the times of a message are kept to the millisecond, so the wait and run times
+of fast work are measured. On MariaDB and MySQL that migration copies the messages table,
+and publishing, claiming and acking wait until it is done: on a large table, deploy it at
+a quiet moment, or purge old messages first (`lessormq purge-old-messages`).
 
 ## Setting up
 

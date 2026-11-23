@@ -72,9 +72,26 @@ func TestSearchNeedles(t *testing.T) {
 func TestDurations(t *testing.T) {
 	var d Durations
 	d.Add(0, 9, 0, 0)
-	d.Add(3, 1, 7, 7)
+	d.Add(10, 1, 7, 7)
 	v := d.View()
-	if v["avg"] != 0.7 || v["max"] != int64(7) {
+	if v["avg"] != 0.7 || v["max"] != 7.0 {
 		t.Fatalf("view %v", v)
+	}
+}
+
+// Fast work is told apart to the millisecond: 90 runs of 3 ms and 10 of 40 ms.
+func TestDurationsBelowASecond(t *testing.T) {
+	var d Durations
+	d.Add(0, 90, 0.27, 0.003)
+	d.Add(4, 10, 0.4, 0.04)
+	v := d.View()
+	if v["avg"] != 0.007 || v["max"] != 0.04 {
+		t.Fatalf("view %v", v)
+	}
+	if p50 := d.Percentile(0.5); p50 <= 0 || p50 > 0.005 {
+		t.Fatalf("p50 %v", p50)
+	}
+	if p95 := d.Percentile(0.95); p95 < 0.025 || p95 > 0.04 {
+		t.Fatalf("p95 %v", p95)
 	}
 }

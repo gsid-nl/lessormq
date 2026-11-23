@@ -49,6 +49,9 @@ type Dialect interface {
 	PlusSeconds(time, seconds string) string
 	// EpochSeconds is the datetime expression as whole seconds since 1970 UTC.
 	EpochSeconds(time string) string
+	// SecondsBetween is how long from one datetime expression to another, in seconds to
+	// the millisecond.
+	SecondsBetween(from, to string) string
 	// DeleteMessages deletes the rows of messages matching where, at most :limit of them,
 	// in orderBy order when one is given.
 	DeleteMessages(where, orderBy string) string
@@ -91,7 +94,7 @@ func (mariaDB) Least(a, b string) string           { return fmt.Sprintf("LEAST(%
 func (mariaDB) Power(b, e string) string           { return fmt.Sprintf("POW(%s, %s)", b, e) }
 func (mariaDB) Placeholder(int) string             { return "?" }
 func (mariaDB) PlusSeconds(t, s string) string {
-	return fmt.Sprintf("CAST(%s AS DATETIME) + INTERVAL %s SECOND", t, s)
+	return fmt.Sprintf("CAST(%s AS DATETIME(3)) + INTERVAL %s SECOND", t, s)
 }
 func (mariaDB) JSONBool(v bool) string {
 	if v {
@@ -106,6 +109,9 @@ func (mariaDB) JSONWith(c, n, v string) string {
 // EpochSeconds is not UNIX_TIMESTAMP(), which reads the time in the session's zone.
 func (mariaDB) EpochSeconds(t string) string {
 	return fmt.Sprintf("TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', %s)", t)
+}
+func (mariaDB) SecondsBetween(from, to string) string {
+	return fmt.Sprintf("TIMESTAMPDIFF(MICROSECOND, %s, %s) / 1000000", from, to)
 }
 func (mariaDB) DeleteMessages(where, orderBy string) string {
 	order := ""
@@ -171,12 +177,15 @@ func (postgreSQL) Power(b, e string) string {
 	return fmt.Sprintf("POWER(CAST(%s AS DOUBLE PRECISION), %s)", b, e)
 }
 func (postgreSQL) PlusSeconds(t, s string) string {
-	return fmt.Sprintf("CAST(%s AS TIMESTAMP(0)) + (%s) * INTERVAL '1 second'", t, s)
+	return fmt.Sprintf("CAST(%s AS TIMESTAMP(3)) + (%s) * INTERVAL '1 second'", t, s)
 }
 
 // EpochSeconds: of a timestamp without time zone, the nominal seconds, whatever the zone.
 func (postgreSQL) EpochSeconds(t string) string {
 	return fmt.Sprintf("CAST(EXTRACT(EPOCH FROM %s) AS BIGINT)", t)
+}
+func (postgreSQL) SecondsBetween(from, to string) string {
+	return fmt.Sprintf("CAST(EXTRACT(EPOCH FROM (%s) - (%s)) AS DOUBLE PRECISION)", to, from)
 }
 func (postgreSQL) DeleteMessages(where, orderBy string) string { return deleteByID(where, orderBy) }
 func (postgreSQL) InsertOrIgnore(table string, columns, key []string) string {
@@ -215,10 +224,13 @@ func (sqlite) JSONWith(c, n, v string) string {
 func (sqlite) Least(a, b string) string { return fmt.Sprintf("MIN(%s, %s)", a, b) }
 func (sqlite) Power(b, e string) string { return fmt.Sprintf("pow(%s, %s)", b, e) }
 func (sqlite) PlusSeconds(t, s string) string {
-	return fmt.Sprintf("datetime(%s, '+' || CAST(%s AS INTEGER) || ' seconds')", t, s)
+	return fmt.Sprintf("strftime('%%Y-%%m-%%d %%H:%%M:%%f', %s, '+' || CAST(%s AS INTEGER) || ' seconds')", t, s)
 }
 func (sqlite) EpochSeconds(t string) string {
 	return fmt.Sprintf("CAST(strftime('%%s', %s) AS INTEGER)", t)
+}
+func (sqlite) SecondsBetween(from, to string) string {
+	return fmt.Sprintf("ROUND((julianday(%s) - julianday(%s)) * 86400.0, 3)", to, from)
 }
 func (sqlite) DeleteMessages(where, orderBy string) string { return deleteByID(where, orderBy) }
 func (sqlite) InsertOrIgnore(table string, columns, key []string) string {

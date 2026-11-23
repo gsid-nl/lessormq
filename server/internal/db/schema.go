@@ -16,6 +16,9 @@ import (
 // A new database gets the schema at once and every migration of its series recorded as
 // done. A database that has only part of its series was not upgraded far enough by the
 // PHP server and is left alone.
+//
+// Changes made since are the migrations below, run once each in order on every database,
+// a new one included, and recorded in the same table.
 
 const migrationsTable = "doctrine_migration_versions"
 
@@ -36,6 +39,41 @@ var series = map[string][]string{
 	"mysql":      {`LessorMQ\Migrations\MySQL\Version20261120200000`},
 	"postgresql": {`LessorMQ\Migrations\PostgreSQL\Version20261120200000`},
 	"sqlite":     {`LessorMQ\Migrations\SQLite\Version20261120200000`},
+}
+
+// migration is a change of the schema after the PHP server's: its version, and its
+// statements per database (none where the change needs none).
+type migration struct {
+	version string
+	sql     map[string][]string
+}
+
+// messageTimesMS: the times of a message to the millisecond, so how long fast work waited
+// and ran reads more than 0. MariaDB and MySQL copy the messages table to do it, and hold
+// writes to it while they do; SQLite keeps a time as the text it was given.
+var messageTimesMS = []string{
+	`ALTER TABLE messages
+		MODIFY processing_started_at DATETIME(3) DEFAULT NULL,
+		MODIFY processing_after DATETIME(3) DEFAULT NULL,
+		MODIFY processed_at DATETIME(3) DEFAULT NULL,
+		MODIFY failed_at DATETIME(3) DEFAULT NULL,
+		MODIFY created_at DATETIME(3) NOT NULL`,
+}
+
+var migrations = []migration{
+	{
+		version: `LessorMQ\Migrations\Version20261123170000`,
+		sql: map[string][]string{
+			"mariadb": messageTimesMS,
+			"mysql":   messageTimesMS,
+			"postgresql": {`ALTER TABLE messages
+				ALTER COLUMN processing_started_at TYPE TIMESTAMP(3) WITHOUT TIME ZONE,
+				ALTER COLUMN processing_after TYPE TIMESTAMP(3) WITHOUT TIME ZONE,
+				ALTER COLUMN processed_at TYPE TIMESTAMP(3) WITHOUT TIME ZONE,
+				ALTER COLUMN failed_at TYPE TIMESTAMP(3) WITHOUT TIME ZONE,
+				ALTER COLUMN created_at TYPE TIMESTAMP(3) WITHOUT TIME ZONE`},
+		},
+	},
 }
 
 func mysqlSchema() []string {
@@ -192,7 +230,8 @@ func (d *DB) baseline() []string {
 	}
 }
 
-// Migrate brings the schema up to date: on a new database, all of it.
+// Migrate brings the schema up to date: on a new database, all of it, then every
+// migration not run yet.
 func (d *DB) Migrate(ctx context.Context) error {
 	conn, err := d.Conn(ctx)
 	if err != nil {
@@ -244,27 +283,48 @@ func (d *DB) Migrate(ctx context.Context) error {
 			missing++
 		}
 	}
-	switch {
-	case missing == 0:
-		return nil
-	case missing < len(versions):
+	if missing > 0 && missing < len(versions) {
 		return fmt.Errorf("this database stopped at an older schema (%d of %d migrations of LessorMQ 0.3): "+
 			"upgrade it with the PHP server of LessorMQ 0.3 first", len(versions)-missing, len(versions))
 	}
 
-	start := time.Now()
-	for _, stmt := range d.baseline() {
-		if _, err := conn.ExecContext(ctx, stmt); err != nil {
-			return fmt.Errorf("schema: %w\n%s", err, strings.TrimSpace(stmt))
+	if missing > 0 {
+		start := time.Now()
+		for _, stmt := range d.baseline() {
+			if _, err := conn.ExecContext(ctx, stmt); err != nil {
+				return fmt.Errorf("schema: %w\n%s", err, strings.TrimSpace(stmt))
+			}
+		}
+		elapsed := int(time.Since(start).Milliseconds())
+		for _, v := range versions {
+			if err := d.record(ctx, conn, v, elapsed); err != nil {
+				return err
+			}
 		}
 	}
-	elapsed := int(time.Since(start).Milliseconds())
-	for _, v := range versions {
-		q, a := d.Bind(d.D.InsertOrIgnore(migrationsTable, []string{"version", "executed_at", "execution_time"},
-			[]string{"version"}), Args{"version": v, "executed_at": T(time.Now()), "execution_time": elapsed})
-		if _, err := conn.ExecContext(ctx, q, a...); err != nil {
-			return fmt.Errorf("migrations: %w", err)
+
+	for _, m := range migrations {
+		if done[m.version] {
+			continue
 		}
+		start := time.Now()
+		for _, stmt := range m.sql[d.D.Name()] {
+			if _, err := conn.ExecContext(ctx, stmt); err != nil {
+				return fmt.Errorf("migration %s: %w", m.version, err)
+			}
+		}
+		if err := d.record(ctx, conn, m.version, int(time.Since(start).Milliseconds())); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (d *DB) record(ctx context.Context, conn *sql.Conn, version string, elapsed int) error {
+	q, a := d.Bind(d.D.InsertOrIgnore(migrationsTable, []string{"version", "executed_at", "execution_time"},
+		[]string{"version"}), Args{"version": version, "executed_at": T(time.Now()), "execution_time": elapsed})
+	if _, err := conn.ExecContext(ctx, q, a...); err != nil {
+		return fmt.Errorf("migrations: %w", err)
 	}
 	return nil
 }

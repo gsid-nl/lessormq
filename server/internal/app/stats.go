@@ -367,6 +367,36 @@ func (a *App) ListQueues(ctx context.Context, p *Principal) (map[string]any, err
 	return map[string]any{"items": items}, nil
 }
 
+// ListQueuesOf lists every queue of these tenants with settings and figures, each with
+// its tenant: an operator's view over tenants.
+func (a *App) ListQueuesOf(ctx context.Context, tenants []string) (map[string]any, error) {
+	t := now()
+	items := []any{}
+	for _, tenant := range tenants {
+		names, err := a.QueueNames(ctx, tenant)
+		if err != nil {
+			return nil, err
+		}
+		if len(names) == 0 {
+			continue
+		}
+		configs, err := a.ForQueues(ctx, tenant, names)
+		if err != nil {
+			return nil, err
+		}
+		stats, err := a.Stats(ctx, tenant, names, t)
+		if err != nil {
+			return nil, err
+		}
+		for _, n := range names {
+			v := QueueView(n, configs[n], stats[n])
+			v["tenant"] = tenant
+			items = append(items, v)
+		}
+	}
+	return map[string]any{"items": items}, nil
+}
+
 // GetQueue is one queue with its settings and figures.
 func (a *App) GetQueue(ctx context.Context, p *Principal, queue string) (map[string]any, error) {
 	if err := p.RequireScopes(ScopeConsume, ScopeMetrics, ScopeAdmin); err != nil {

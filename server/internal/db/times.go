@@ -8,8 +8,10 @@ import (
 	"time"
 )
 
-// SQLTime is how every time is stored and compared: UTC, to the second, without a zone.
-const SQLTime = "2006-01-02 15:04:05"
+// SQLTime is how every time is stored and compared: UTC, to the millisecond, without a
+// zone. A column of whole seconds (every one but the times of a message) keeps what it
+// can of it: MariaDB cuts the fraction off, MySQL and PostgreSQL round it.
+const SQLTime = "2006-01-02 15:04:05.000"
 
 // T formats a time as a stored DATETIME value.
 func T(t time.Time) string { return t.UTC().Format(SQLTime) }
@@ -25,7 +27,7 @@ func TPtr(t *time.Time) any {
 // ParseTime reads a stored DATETIME value as the UTC time it is.
 func ParseTime(s string) (time.Time, error) {
 	s = strings.TrimSpace(s)
-	for _, layout := range []string{SQLTime, "2006-01-02 15:04:05.999999", time.RFC3339Nano, "2006-01-02T15:04:05"} {
+	for _, layout := range []string{"2006-01-02 15:04:05", time.RFC3339Nano, "2006-01-02T15:04:05"} {
 		if t, err := time.ParseInLocation(layout, s, time.UTC); err == nil {
 			return t.UTC(), nil
 		}
@@ -47,7 +49,7 @@ func (n *NullTime) Scan(v any) error {
 		return nil
 	case time.Time:
 		// A timestamp without a zone is read as UTC, whatever zone the driver gave it.
-		n.Time = time.Date(x.Year(), x.Month(), x.Day(), x.Hour(), x.Minute(), x.Second(), 0, time.UTC)
+		n.Time = time.Date(x.Year(), x.Month(), x.Day(), x.Hour(), x.Minute(), x.Second(), x.Nanosecond(), time.UTC)
 	case []byte:
 		t, err := ParseTime(string(x))
 		if err != nil {

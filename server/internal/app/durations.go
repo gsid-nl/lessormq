@@ -4,12 +4,16 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"strconv"
 	"strings"
 )
 
 // DurationBounds are the upper bounds (exclusive) of the classes of a Durations, in
 // seconds; the last class has none.
-var DurationBounds = []int64{1, 2, 5, 10, 30, 60, 120, 300, 600, 1800, 3600, 7200, 21600, 86400}
+var DurationBounds = []float64{
+	0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5,
+	1, 2, 5, 10, 30, 60, 120, 300, 600, 1800, 3600, 7200, 21600, 86400,
+}
 
 // Durations is how long something took for a set of messages (waiting for a worker, or
 // running), kept as a histogram over fixed classes, so the database can group them and
@@ -19,22 +23,22 @@ type Durations struct {
 	counts map[int]int64
 	count  int64
 	sum    float64
-	max    *int64
+	max    *float64
 }
 
-// DurationClassSQL is the class of the whole seconds expression, as SQL.
+// DurationClassSQL is the class of the seconds expression, as SQL.
 func DurationClassSQL(seconds string) string {
 	var b strings.Builder
 	b.WriteString("CASE")
 	for class, bound := range DurationBounds {
-		fmt.Fprintf(&b, " WHEN %s < %d THEN %d", seconds, bound, class)
+		fmt.Fprintf(&b, " WHEN %s < %s THEN %d", seconds, strconv.FormatFloat(bound, 'f', -1, 64), class)
 	}
 	fmt.Fprintf(&b, " ELSE %d END", len(DurationBounds))
 	return b.String()
 }
 
 // Add takes in count durations of one class, with their sum and their maximum.
-func (d *Durations) Add(class int, count int64, sum float64, maximum int64) {
+func (d *Durations) Add(class int, count int64, sum, maximum float64) {
 	if count <= 0 {
 		return
 	}
@@ -76,36 +80,36 @@ func (d *Durations) Percentile(q float64) float64 {
 		classes = append(classes, c)
 	}
 	sort.Ints(classes)
-	maximum := float64(*d.max)
+	maximum := *d.max
 	for _, class := range classes {
 		count := d.counts[class]
 		if float64(before+count) >= target {
 			var lower float64
 			if class > 0 {
-				lower = float64(DurationBounds[class-1])
+				lower = DurationBounds[class-1]
 			}
 			upper := math.Max(lower, maximum)
 			if class < len(DurationBounds) {
-				upper = float64(DurationBounds[class])
+				upper = DurationBounds[class]
 			}
 			value := lower + (upper-lower)*((target-float64(before))/float64(count))
-			return round(math.Max(0, math.Min(value, maximum)), 1)
+			return round(math.Max(0, math.Min(value, maximum)), 3)
 		}
 		before += count
 	}
 	return maximum
 }
 
-// View is {avg, p50, p95, max}, or nil without durations.
+// View is {avg, p50, p95, max} in seconds to the millisecond, or nil without durations.
 func (d *Durations) View() map[string]any {
 	if d.count == 0 || d.max == nil {
 		return nil
 	}
 	return map[string]any{
-		"avg": round(math.Max(0, d.sum/float64(d.count)), 2),
+		"avg": round(math.Max(0, d.sum/float64(d.count)), 3),
 		"p50": d.Percentile(0.5),
 		"p95": d.Percentile(0.95),
-		"max": max(0, *d.max),
+		"max": round(math.Max(0, *d.max), 3),
 	}
 }
 

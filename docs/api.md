@@ -246,11 +246,16 @@ Queue settings and statistics.
 
 `GET /v1/queues`
 
-Requires the `admin` scope.
+Requires the `admin` scope. With an operator key and no `LessorMQ-Tenant` header,
+the queues of every tenant, each with its `tenant`.
+
+| Parameter | In | Type | Description |
+|---|---|---|---|
+| `tenants` | query | string | Operator key without the `LessorMQ-Tenant` header only: the tenants whose queues to list, comma-separated. An unknown tenant has none, and an empty list lists none. Without it, every tenant. Ignored for a tenant key. |
 
 | Status | Meaning | Body |
 |---|---|---|
-| 200 | All queues of the tenant, with settings and statistics. | object |
+| 200 | All queues of the tenant (or the tenants), with settings and statistics. | object |
 | 401 | Missing, unknown or revoked API key. Code `unauthorized`. | [Problem](#problem) |
 | 403 | The key lacks the scope, the queue is outside its patterns, or a tenant key called an operator endpoint: code `forbidden`. The key's tenant is suspended: code `tenant_suspended`. | [Problem](#problem) |
 
@@ -1029,6 +1034,7 @@ Any subset of the queue settings; nested objects are merged.
 | `settings` (required) | [QueueSettings](#queuesettings) |  |
 | `stats` (required) | [QueueStats](#queuestats) |  |
 | `paused_at` | string or null (date-time) |  |
+| `tenant` | [TenantId](#tenantid) | Only in a list of several tenants' queues (an operator key's). |
 
 ### BulkFilter
 
@@ -1186,16 +1192,18 @@ work of less than a second mostly reads 0; the average stays true all the same.
 
 ### Durations
 
-In seconds. The average and the maximum are exact; the median and the 95th
-percentile are estimated from classes (below 1, 2, 5, 10, 30 seconds, 1, 2, 5, 10,
-30 minutes, 1, 2, 6 hours, a day, and longer), interpolated within the class.
+In seconds, to the millisecond. The average and the maximum are exact; the median
+and the 95th percentile are estimated from classes (below 5, 10, 25, 50, 100, 250,
+500 milliseconds, 1, 2, 5, 10, 30 seconds, 1, 2, 5, 10, 30 minutes, 1, 2, 6 hours,
+a day, and longer), interpolated within the class. Messages from before LessorMQ
+kept milliseconds count in whole seconds.
 
 | Field | Type | Description |
 |---|---|---|
 | `avg` (required) | number |  |
 | `p50` (required) | number |  |
 | `p95` (required) | number |  |
-| `max` (required) | integer |  |
+| `max` (required) | number |  |
 
 ### Problem
 

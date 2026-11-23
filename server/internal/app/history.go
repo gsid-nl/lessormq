@@ -183,7 +183,7 @@ func (a *App) historyDeadLettered(ctx context.Context, tenant string, queues []s
 
 func (a *App) historyCompleted(ctx context.Context, tenant string, queues []string, from, size int64,
 	into []int64, waits, runs []*Durations) error {
-	epoch := a.DB.D.EpochSeconds
+	epoch, between := a.DB.D.EpochSeconds, a.DB.D.SecondsBetween
 	args := historyArgs(tenant, queues, from, size)
 	args["scan_from"] = db.T(time.Unix(from-longestRun, 0))
 	rows, err := a.DB.Query(ctx, a.DB, `SELECT bucket, wait_class, run_class, COUNT(*) AS n,
@@ -192,8 +192,8 @@ func (a *App) historyCompleted(ctx context.Context, tenant string, queues []stri
 			SELECT bucket, wait, run, `+DurationClassSQL("wait")+` AS wait_class, `+DurationClassSQL("run")+` AS run_class
 			FROM (
 				SELECT FLOOR((`+epoch("processed_at")+` - :from) / :size) AS bucket,
-					`+epoch("processing_started_at")+` - `+epoch("COALESCE(processing_after, created_at)")+` AS wait,
-					`+epoch("processed_at")+` - `+epoch("processing_started_at")+` AS run
+					`+between("COALESCE(processing_after, created_at)", "processing_started_at")+` AS wait,
+					`+between("processing_started_at", "processed_at")+` AS run
 				FROM messages
 				WHERE tenant_id = :tenant AND queue IN (:queues) AND status = 'completed'
 				  AND processing_started_at >= :scan_from AND processed_at >= :from_time
@@ -214,8 +214,8 @@ func (a *App) historyCompleted(ctx context.Context, tenant string, queues []stri
 			continue
 		}
 		into[b] += int64(n.f)
-		waits[b].Add(int(waitClass.f), int64(n.f), waitSum.f, int64(waitMax.f))
-		runs[b].Add(int(runClass.f), int64(n.f), runSum.f, int64(runMax.f))
+		waits[b].Add(int(waitClass.f), int64(n.f), waitSum.f, waitMax.f)
+		runs[b].Add(int(runClass.f), int64(n.f), runSum.f, runMax.f)
 	}
 	return rows.Err()
 }

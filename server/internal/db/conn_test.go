@@ -3,6 +3,7 @@ package db
 import (
 	"reflect"
 	"testing"
+	"time"
 )
 
 func TestBindNamedParameters(t *testing.T) {
@@ -25,8 +26,15 @@ func TestBindNamedParameters(t *testing.T) {
 
 func TestNullTime(t *testing.T) {
 	var n NullTime
-	if err := n.Scan([]byte("2026-11-23 10:00:05")); err != nil || !n.Valid || T(n.Time) != "2026-11-23 10:00:05" {
+	if err := n.Scan([]byte("2026-11-23 10:00:05")); err != nil || !n.Valid || T(n.Time) != "2026-11-23 10:00:05.000" {
 		t.Fatalf("scan: %v %v", err, n)
+	}
+	if err := n.Scan([]byte("2026-11-23 10:00:05.042")); err != nil || T(n.Time) != "2026-11-23 10:00:05.042" {
+		t.Fatalf("milliseconds: %v %v", err, n)
+	}
+	if err := n.Scan(time.Date(2026, 11, 23, 10, 0, 5, 42e6, time.FixedZone("x", 3600))); err != nil ||
+		T(n.Time) != "2026-11-23 10:00:05.042" {
+		t.Fatalf("time: %v %v", err, n)
 	}
 	if err := n.Scan(nil); err != nil || n.Valid {
 		t.Fatalf("null: %v", n)

@@ -8,6 +8,7 @@ steps:
   - publish: {body: {n: 2}}
   - publish: {body: {n: 3}}
   - publish: {queue: other, body: {}}
+  - sleep: 0.3
   - claim: {}
     save: l1
   - sleep: 1.2
@@ -25,8 +26,9 @@ steps:
       body.totals.published: 3
       body.totals.completed: 1
       body.totals.dead_lettered: 1
-      body.totals.run_seconds.max: {between: [1, 2]}
-      body.totals.wait_seconds.max: {between: [0, 1]}
+      # To the millisecond: whole seconds would read 1 or 2, and 0 or 1.
+      body.totals.run_seconds.max: {between: [1.15, 1.9]}
+      body.totals.wait_seconds.max: {between: [0.25, 0.95]}
   - tenant_history: {period: 1h}
     expect: {status: 200, body.queue: null, body.totals.published: 4, body.totals.completed: 1}
   # Every tenant together for an operator key: this one's messages and whatever else ran.

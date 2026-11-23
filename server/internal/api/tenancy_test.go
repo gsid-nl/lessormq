@@ -168,6 +168,17 @@ func TestEveryMessagesQueryFiltersOnTenant(t *testing.T) {
 	if status, _ := c.call(operator, "GET", "/v1/history?tenants=ta,tb", nil, ""); status != 200 {
 		t.Fatalf("operator history of some tenants: %d", status)
 	}
+	if status, out := c.call(operator, "GET", "/v1/queues?tenants=ta,tb", nil, ""); status != 200 ||
+		len(out["items"].([]any)) != 1 || out["items"].([]any)[0].(map[string]any)["tenant"] != "ta" {
+		t.Fatalf("operator queues of some tenants: %d %v", status, out)
+	}
+	if status, out := c.call(operator, "GET", "/v1/queues?tenants=", nil, ""); status != 200 || len(out["items"].([]any)) != 0 {
+		t.Fatalf("operator queues of no tenant: %d %v", status, out)
+	}
+	// A tenant's key lists its own queues whatever ?tenants= says.
+	if status, out := c.call(keys["tb"], "GET", "/v1/queues?tenants=ta", nil, ""); status != 200 || len(out["items"].([]any)) != 0 {
+		t.Fatalf("a tenant key's own queues: %d %v", status, out)
+	}
 	if status, _ := c.call(operator, "GET", "/v1/tenants/ta", nil, ""); status != 200 {
 		t.Fatalf("operator tenant: %d", status)
 	}

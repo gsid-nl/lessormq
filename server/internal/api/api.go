@@ -103,7 +103,7 @@ func (s *Server) routes() []route {
 		r("POST", "/v1/tenants/{tenantId}/api-keys", operator, s.createTenantKey),
 		r("DELETE", "/v1/tenants/{tenantId}/api-keys/{keyId}", operator, s.revokeTenantKey),
 
-		r("GET", "/v1/queues", scoped, s.listQueues, app.ScopeAdmin),
+		r("GET", "/v1/queues", anyKey, s.listQueues),
 		r("GET", "/v1/queues/{queue}", scoped, s.getQueue, app.ScopeConsume, app.ScopeMetrics, app.ScopeAdmin),
 		r("PATCH", "/v1/queues/{queue}", scoped, s.patchQueue, app.ScopeAdmin),
 		r("GET", "/v1/queues/{queue}/workers", scoped, s.workers, app.ScopeConsume, app.ScopeMetrics, app.ScopeAdmin),

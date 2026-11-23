@@ -136,7 +136,7 @@ func (a *App) createMessage(ctx context.Context, m *Message) (*Message, bool, er
 	}
 	for attempt := 1; ; attempt++ {
 		m.ID = NewMessageID()
-		m.CreatedAt = now().Truncate(time.Second)
+		m.CreatedAt = now().Truncate(time.Millisecond)
 		m.UpdatedAt = m.CreatedAt
 		err := a.insertMessage(ctx, m)
 		if err == nil {
