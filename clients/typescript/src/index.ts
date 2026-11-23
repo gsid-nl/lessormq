@@ -12,7 +12,7 @@
  */
 
 export { Client, USER_AGENT } from "./client.ts";
-export type { CallOptions, ClaimOptions, ClientOptions, FailOptions, Logger, PublishOptions } from "./client.ts";
+export type { AckOutcome, CallOptions, ClaimOptions, ClientOptions, FailOptions, Logger, PublishOptions } from "./client.ts";
 export {
   ApiError,
   AuthenticationError,

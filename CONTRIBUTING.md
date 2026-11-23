@@ -19,23 +19,23 @@ the most care: every client library and every deployed worker depends on them.
 
 ## Working on the server
 
+The server is Go, in `server/`.
+
 ```sh
-composer install
-docker compose up -d --wait        # MariaDB, Redis and the server on :18080
-vendor/bin/phpunit                 # unit and functional tests
+cd server && go test ./... && cd ..   # unit tests, and every endpoint on SQLite
+composer install                   # the conformance runner and the docs build (PHP tools)
 conformance/run.sh                 # the protocol scenarios against a real server
 LESSORMQ_DATABASE=postgresql conformance/run.sh   # ... on mysql, postgresql or sqlite
 ```
 
-- PHP code follows PSR-12 (`phpcs --standard=PSR12 src tests`).
-- Migrations are append-only: never edit or delete one that exists; write a new one,
-  and keep DDL online and idempotent (`ADD COLUMN IF NOT EXISTS`, `ALGORITHM=INSTANT`
-  or `INPLACE, LOCK=NONE`).
-- Each database has its own series: `migrations/` (MariaDB), `migrations/mysql`,
-  `migrations/postgresql`, `migrations/sqlite`. A schema change is a migration in all
-  four.
-- SQL that differs between the databases goes in `src/Database` (the dialects); the rest
-  is written once, in SQL all four read alike. The conformance suite runs on every
+- Go code is `gofmt`ed and passes `go vet`.
+- Every query on `messages` names the tenant (`tenant_id`); a test walks every endpoint
+  and fails on one that does not (`server/internal/api/tenancy_test.go`).
+- The schema is in `server/internal/db/schema.go`. Migrations are append-only: never
+  edit or remove one that exists; a change is a new one for each of the four databases,
+  with online, idempotent DDL (`ADD COLUMN IF NOT EXISTS`).
+- SQL that differs between the databases goes in `server/internal/db/dialect.go`; the
+  rest is written once, in SQL all four read alike. The conformance suite runs on every
   database in CI.
 - Times are UTC everywhere.
 

@@ -67,6 +67,12 @@ export interface paths {
          *     Messages are handed out roughly in order of availability; strict ordering is not
          *     guaranteed. Delivery is at least once: a handler must tolerate seeing a message
          *     again.
+         *
+         *     With `max_messages`, the claim leases as many ready messages as there are, up to
+         *     that number, each with a receipt of its own, and answers them as a list
+         *     (`LeaseBatch`). It waits only while there is none: one ready message is answered
+         *     at once. A worker with many short jobs saves round trips this way; acking them
+         *     together (`POST /v1/acks`) saves the rest.
          */
         post: operations["claim"];
         delete?: never;
@@ -118,6 +124,33 @@ export interface paths {
          *     same receipt returns 204 again.
          */
         post: operations["ack"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/acks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Report success for several leases
+         * @description Acks up to 100 leases in one request, as `ack` does one: each with the receipt of
+         *     its own claim. Every lease gets an outcome of its own, in the order of the request;
+         *     one that cannot be acked does not hold up the others.
+         *
+         *     - `acked`: the message is completed (also when this lease was acked before);
+         *     - `lease_lost`: the receipt is not the current lease; stop reporting on it;
+         *     - `not_found`: no such message in this tenant;
+         *     - `forbidden`: the key may not use the message's queue.
+         */
+        post: operations["ackBatch"];
         delete?: never;
         options?: never;
         head?: never;
@@ -554,8 +587,10 @@ export interface paths {
         };
         /**
          * History of the tenant's queues
-         * @description Every queue the key may use, added up. See [History](#history) for what is counted
-         *     and how far back it reaches.
+         * @description Every queue the key may use, added up. With an operator key: every tenant's queues
+         *     together, or one tenant's with the `LessorMQ-Tenant` header; the durations are
+         *     merged before the percentiles are read, so they are those of all the messages. See
+         *     [History](#history) for what is counted and how far back it reaches.
          */
         get: operations["getHistory"];
         put?: never;
@@ -672,6 +707,27 @@ export interface components {
             wait_seconds?: number;
             /** @description Lease length for this claim, capped at the queue's `max_lease_seconds`. Defaults to the queue's `lease_seconds`. */
             lease_seconds?: number;
+            /** @description Lease up to this many ready messages at once and answer a `LeaseBatch`. Without it the answer is one `Lease`. */
+            max_messages?: number;
+        };
+        LeaseBatch: {
+            /** @description The leased messages, oldest first, each with its own receipt. */
+            items: components["schemas"]["Lease"][];
+        };
+        AckBatchRequest: {
+            leases: {
+                /** @description The message id of the lease. */
+                message: string;
+                receipt: string;
+            }[];
+        };
+        AckBatchResponse: {
+            /** @description One per lease of the request, in the same order. */
+            items: {
+                message: string;
+                /** @enum {string} */
+                outcome: "acked" | "lease_lost" | "not_found" | "forbidden";
+            }[];
         };
         DeliveredMessage: {
             id: string;
@@ -1339,13 +1395,13 @@ export interface operations {
             };
         };
         responses: {
-            /** @description A message is leased to the caller. */
+            /** @description A message is leased to the caller; with `max_messages`, one or more. */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Lease"];
+                    "application/json": components["schemas"]["Lease"] | components["schemas"]["LeaseBatch"];
                 };
             };
             /** @description No message was ready within `wait_seconds`, or the queue is paused. */
@@ -1421,6 +1477,33 @@ export interface operations {
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
             409: components["responses"]["LeaseLost"];
+        };
+    };
+    ackBatch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AckBatchRequest"];
+            };
+        };
+        responses: {
+            /** @description The outcome of every lease. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AckBatchResponse"];
+                };
+            };
+            400: components["responses"]["ValidationFailed"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
         };
     };
     fail: {

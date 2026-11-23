@@ -30,6 +30,13 @@ final class HttpAdapter implements Adapter
                 (object) $this->only($args, ['consumer', 'route', 'wait_seconds', 'lease_seconds']),
                 $auth,
             ),
+            'claim_batch' => $this->http->request(
+                'POST',
+                '/v1/queues/' . rawurlencode($args['queue']) . '/claims',
+                $this->only($args, ['consumer', 'route', 'wait_seconds', 'lease_seconds', 'max_messages']),
+                $auth,
+            ),
+            'ack_batch' => $this->http->request('POST', '/v1/acks', $this->only($args, ['leases']), $auth),
             'extend', 'ack', 'fail', 'release' => $this->http->request(
                 'POST',
                 '/v1/messages/' . rawurlencode($args['message']) . '/' . $call,

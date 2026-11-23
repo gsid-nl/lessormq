@@ -75,6 +75,9 @@ export interface ClaimOptions extends CallOptions {
   leaseSeconds?: number;
 }
 
+/** What became of one lease of ackBatch(): acked (also when acked before), lease_lost, not_found or forbidden. */
+export type AckOutcome = Schemas["AckBatchResponse"]["items"][number]["outcome"];
+
 export interface FailOptions extends CallOptions {
   /** The input itself cannot be processed; by default, whether the error is permanent (see isPermanent). */
   permanent?: boolean;
@@ -149,16 +152,47 @@ export class Client {
    * nothing became available, or the queue is paused.
    */
   async claim<Body = unknown>(queue: string, options: ClaimOptions = {}): Promise<Lease<Body> | null> {
+    const response = await this.#claim(queue, options);
+    return response.status === 204 ? null : leaseFrom<Body>(response.body as Schemas["Lease"]);
+  }
+
+  /**
+   * Lease up to `maxMessages` (1 to 100) ready messages at once, oldest first, each with a
+   * receipt of its own. Waits up to `waitSeconds` only while there is none; an empty list
+   * when nothing became available. Report each lease as usual, or ack them together with
+   * ackBatch().
+   */
+  async claimBatch<Body = unknown>(queue: string, maxMessages: number, options: ClaimOptions = {}): Promise<Lease<Body>[]> {
+    const response = await this.#claim(queue, options, maxMessages);
+    if (response.status === 204) return [];
+    return (response.body as Schemas["LeaseBatch"]).items.map((item) => leaseFrom<Body>(item));
+  }
+
+  /**
+   * Report success for up to 100 leases in one request. The outcomes are in the order of
+   * `leases`; one that cannot be acked does not hold up the others.
+   */
+  async ackBatch(leases: Lease[], options: CallOptions = {}): Promise<AckOutcome[]> {
+    const payload: Schemas["AckBatchRequest"] = {
+      leases: leases.map((lease) => ({ message: lease.message.id, receipt: lease.receipt })),
+    };
+    const response = await this.#send({ method: "POST", path: "/v1/acks", payload, repeatable: true, signal: options.signal });
+    const items = (response.body as Schemas["AckBatchResponse"]).items;
+    return leases.map((_, i) => items[i]?.outcome ?? "not_found");
+  }
+
+  async #claim(queue: string, options: ClaimOptions, maxMessages?: number) {
     const waitSeconds = Math.max(0, options.waitSeconds ?? 0);
     const payload: Schemas["ClaimRequest"] = {};
     if (options.consumer !== undefined) payload.consumer = options.consumer;
     if (options.route !== undefined) payload.route = options.route;
     if (waitSeconds > 0) payload.wait_seconds = waitSeconds;
     if (options.leaseSeconds !== undefined) payload.lease_seconds = options.leaseSeconds;
+    if (maxMessages !== undefined) payload.max_messages = maxMessages;
 
     // A claim whose answer got lost leaves a lease that simply expires and counts as an
     // attempt, so claims are retried like the rest.
-    const response = await this.#send({
+    return this.#send({
       method: "POST",
       path: `/v1/queues/${segment(queue)}/claims`,
       payload,
@@ -166,7 +200,6 @@ export class Client {
       extraTimeoutMs: waitSeconds * 1000,
       signal: options.signal,
     });
-    return response.status === 204 ? null : leaseFrom<Body>(response.body as Schemas["Lease"]);
   }
 
   /**

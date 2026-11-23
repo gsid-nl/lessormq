@@ -45,6 +45,7 @@ type config struct {
 	bodyBytes  int
 	report     time.Duration
 	drain      time.Duration
+	batch      int
 }
 
 func main() {
@@ -61,6 +62,7 @@ func main() {
 	flag.DurationVar(&c.work, "work", 0, "time a worker spends on each message")
 	flag.IntVar(&c.bodyBytes, "body-bytes", 200, "approximate size of each body")
 	flag.DurationVar(&c.report, "report", 10*time.Second, "how often to report")
+	flag.IntVar(&c.batch, "batch", 0, "claim up to this many messages at once and ack them together (0: one at a time)")
 	flag.DurationVar(&c.drain, "drain", 2*time.Minute, "how long workers may take to empty the queue after publishing stops")
 	flag.Parse()
 
@@ -308,8 +310,77 @@ type lease struct {
 	} `json:"message"`
 }
 
+// workBatch claims up to c.batch messages at once, waits c.work, and acks them together.
+func workBatch(ctx context.Context, cl *client, c config, st *stats, consumer string) {
+	for ctx.Err() == nil {
+		t := time.Now()
+		status, data, err := cl.post(ctx, "/v1/queues/"+c.queue+"/claims",
+			map[string]any{"wait_seconds": c.wait, "consumer": consumer, "max_messages": c.batch})
+		d := time.Since(t)
+		switch {
+		case err != nil:
+			if ctx.Err() == nil {
+				st.fail(opClaim, "network: "+short(err))
+				time.Sleep(100 * time.Millisecond)
+			}
+			continue
+		case status == http.StatusNoContent:
+			st.empty.Add(1)
+			continue
+		case status != http.StatusOK:
+			st.fail(opClaim, fmt.Sprintf("%d %s", status, code(data)))
+			time.Sleep(100 * time.Millisecond)
+			continue
+		}
+		st.observe(opClaim, d)
+		var batch struct {
+			Items []lease `json:"items"`
+		}
+		if err := json.Unmarshal(data, &batch); err != nil || len(batch.Items) == 0 {
+			st.fail(opClaim, "unreadable batch")
+			continue
+		}
+		if c.work > 0 {
+			time.Sleep(c.work)
+		}
+		leases := make([]map[string]string, len(batch.Items))
+		for i, l := range batch.Items {
+			leases[i] = map[string]string{"message": l.Message.ID, "receipt": l.Receipt}
+		}
+		t = time.Now()
+		status, data, err = cl.post(context.Background(), "/v1/acks", map[string]any{"leases": leases})
+		d = time.Since(t)
+		switch {
+		case err != nil:
+			st.fail(opAck, "network: "+short(err))
+		case status != http.StatusOK:
+			st.fail(opAck, fmt.Sprintf("%d %s", status, code(data)))
+		default:
+			var res struct {
+				Items []struct {
+					Outcome string `json:"outcome"`
+				} `json:"items"`
+			}
+			json.Unmarshal(data, &res)
+			st.observe(opAck, d)
+			for i, r := range res.Items {
+				if r.Outcome != "acked" {
+					st.fail(opAck, "batch: "+r.Outcome)
+					continue
+				}
+				st.observe(opE2E, time.Since(time.Unix(0, batch.Items[i].Message.Body.PublishedAt)))
+				st.acked.Add(1)
+			}
+		}
+	}
+}
+
 // work claims, waits c.work, and acks, until ctx ends.
 func work(ctx context.Context, cl *client, c config, st *stats, consumer string) {
+	if c.batch > 0 {
+		workBatch(ctx, cl, c, st, consumer)
+		return
+	}
 	for ctx.Err() == nil {
 		t := time.Now()
 		status, data, err := cl.post(ctx, "/v1/queues/"+c.queue+"/claims", map[string]any{"wait_seconds": c.wait, "consumer": consumer})

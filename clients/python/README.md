@@ -94,6 +94,11 @@ if lease is not None:
 hands a message back without counting the attempt. All of them raise `LeaseLostError`
 once the lease has ended: drop the message then, it is someone else's now.
 
+Many short jobs go faster in batches: `client.claim_batch("mail", 50)` leases up to 50
+ready messages at once (each with its own lease), and `client.ack_batch(leases)` acks them
+in one request, with an outcome per lease (`acked`, `lease_lost`, ...). A message that
+fails is reported on its own with `fail()`.
+
 ## Errors
 
 Everything the library raises is a `LessorMQError`: `TransportError` when the server

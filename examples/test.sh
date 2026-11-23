@@ -8,9 +8,9 @@ export LESSORMQ_PORT=${LESSORMQ_PORT:-18080} LEASE_SWEEP_SECONDS=1
 export LESSORMQ_URL="http://127.0.0.1:$LESSORMQ_PORT"
 compose() { docker compose -p lessormq-examples -f compose.yaml "$@"; }
 trap 'compose down -v --remove-orphans >/dev/null 2>&1' EXIT
-compose up -d --wait --quiet-pull >/dev/null 2>&1
+compose up -d --wait --quiet-pull --build >/dev/null 2>&1
 
-operator=$(compose exec -T app bin/console lessormq:operator-key:create --name=examples | tail -n 1)
+operator=$(compose exec -T app /usr/local/bin/lessormq operator-key:create --name=examples | tail -n 1)
 export LESSORMQ_KEY=$(curl -sS -X POST "$LESSORMQ_URL/v1/tenants" -H "Authorization: Bearer $operator" \
   -H 'Content-Type: application/json' -d '{"name": "Examples"}' | jq -r .admin_key.secret)
 

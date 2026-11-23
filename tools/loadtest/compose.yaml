@@ -1,7 +1,6 @@
 # A LessorMQ installation shaped like gsid's on hetzner, to load locally: two application
-# nodes (the production image: PHP-FPM with 16 workers for most calls and up to 32 for
-# claims, 1 CPU and 2.5 GiB each) behind nginx, with MariaDB and Redis. run-local.sh starts
-# it, loads it and removes it.
+# nodes (the server image, 1 CPU each) behind nginx, with MariaDB and Redis. run-local.sh
+# starts it, loads it and removes it.
 services:
   db:
     image: mariadb:10.11
@@ -19,26 +18,26 @@ services:
 
   app1: &app
     build:
-      context: ../..
-      dockerfile: docker/Dockerfile
-      target: server
-      pull: true
+      context: ../../server
+      dockerfile: Dockerfile
     image: lessormq-loadtest:server
-    environment: &env
-      APP_ENV: prod
-      APP_SECRET: loadtest
+    environment:
       DATABASE_QUEUE_URL: mysql://root:lessormq@db:3306/lessormq?serverVersion=mariadb-10.11.0&charset=utf8mb4
       REDIS_URL: redis://redis:6379
     deploy:
       resources:
         limits:
           cpus: "1"
-          memory: 2560m
+          memory: 512m
     depends_on:
       db:
         condition: service_healthy
       redis:
         condition: service_started
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/lessormq", "healthcheck"]
+      interval: 2s
+      retries: 60
 
   app2: *app
 

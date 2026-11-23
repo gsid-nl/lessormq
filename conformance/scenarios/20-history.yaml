@@ -29,6 +29,14 @@ steps:
       body.totals.wait_seconds.max: {between: [0, 1]}
   - tenant_history: {period: 1h}
     expect: {status: 200, body.queue: null, body.totals.published: 4, body.totals.completed: 1}
+  # Every tenant together for an operator key: this one's messages and whatever else ran.
+  - tenant_history: {operator: true, period: 1h}
+    expect:
+      status: 200
+      body.queue: null
+      body.totals.published: {between: [4, 1000000000]}
+      body.totals.dead_lettered: {between: [1, 1000000000]}
+      body.totals.run_seconds.max: {between: [1, 1000000]}
   - history: {period: 2h}
     expect: {status: 400}
   - history: {queue: none}

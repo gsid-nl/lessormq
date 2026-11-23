@@ -16,7 +16,7 @@ use Symfony\Component\Yaml\Yaml;
  */
 final class Runner
 {
-    private const PROTOCOL_CALLS = ['publish', 'claim', 'extend', 'ack', 'fail', 'release'];
+    private const PROTOCOL_CALLS = ['publish', 'claim', 'extend', 'ack', 'fail', 'release', 'claim_batch', 'ack_batch'];
 
     /** @var array<string, array{id: string, key: string}> */
     private array $tenants = [];
@@ -166,6 +166,7 @@ final class Runner
 
         $queueSteps = [
             'publish', 'claim', 'publish_http', 'claim_http', 'settings', 'queue', 'messages', 'replay_all', 'purge',
+            'claim_batch',
             'workers',
             'history',
         ];
@@ -243,6 +244,8 @@ final class Runner
             ),
             $name === 'tenant_history' => $this->admin($key, 'GET', '/v1/history?' . http_build_query($args)),
             $name === 'api_key' => $this->admin($key, 'POST', '/v1/api-keys', $args),
+            // Plain HTTP, for answers a library may give before asking the server.
+            $name === 'ack_batch_http' => $this->admin($key, 'POST', '/v1/acks', $args),
             $name === 'message' => $this->admin($key, 'GET', '/v1/messages/' . $id),
             $name === 'replay' => $this->admin($key, 'POST', '/v1/messages/' . $id . '/replay'),
             default => throw new \InvalidArgumentException('unknown step ' . $name),

@@ -98,6 +98,12 @@ Messages are handed out roughly in order of availability; strict ordering is not
 guaranteed. Delivery is at least once: a handler must tolerate seeing a message
 again.
 
+With `max_messages`, the claim leases as many ready messages as there are, up to
+that number, each with a receipt of its own, and answers them as a list
+(`LeaseBatch`). It waits only while there is none: one ready message is answered
+at once. A worker with many short jobs saves round trips this way; acking them
+together (`POST /v1/acks`) saves the rest.
+
 | Parameter | In | Type | Description |
 |---|---|---|---|
 | `queue` (required) | path | [QueueName](#queuename) | Queue name, unique within the tenant. |
@@ -106,7 +112,7 @@ Request body (optional): [ClaimRequest](#claimrequest)
 
 | Status | Meaning | Body |
 |---|---|---|
-| 200 | A message is leased to the caller. | [Lease](#lease) |
+| 200 | A message is leased to the caller; with `max_messages`, one or more. | [Lease](#lease) or [LeaseBatch](#leasebatch) |
 | 204 | No message was ready within `wait_seconds`, or the queue is paused. |  |
 | 400 | The request is malformed or a value is out of range. Code `validation_failed`. | [Problem](#problem) |
 | 401 | Missing, unknown or revoked API key. Code `unauthorized`. | [Problem](#problem) |
@@ -157,6 +163,28 @@ Request body: [ReceiptRequest](#receiptrequest)
 | 403 | The key lacks the scope, the queue is outside its patterns, or a tenant key called an operator endpoint: code `forbidden`. The key's tenant is suspended: code `tenant_suspended`. | [Problem](#problem) |
 | 404 | No such queue or message for this tenant. Code `not_found`. | [Problem](#problem) |
 | 409 | The receipt is not the current lease of this message: the lease expired, the message was claimed again, or it was released. The worker must stop reporting on this message; the server has already made it available again. Code `lease_lost`. | [Problem](#problem) |
+
+### Report success for several leases
+
+`POST /v1/acks`
+
+Acks up to 100 leases in one request, as `ack` does one: each with the receipt of
+its own claim. Every lease gets an outcome of its own, in the order of the request;
+one that cannot be acked does not hold up the others.
+
+- `acked`: the message is completed (also when this lease was acked before);
+- `lease_lost`: the receipt is not the current lease; stop reporting on it;
+- `not_found`: no such message in this tenant;
+- `forbidden`: the key may not use the message's queue.
+
+Request body: [AckBatchRequest](#ackbatchrequest)
+
+| Status | Meaning | Body |
+|---|---|---|
+| 200 | The outcome of every lease. | [AckBatchResponse](#ackbatchresponse) |
+| 400 | The request is malformed or a value is out of range. Code `validation_failed`. | [Problem](#problem) |
+| 401 | Missing, unknown or revoked API key. Code `unauthorized`. | [Problem](#problem) |
+| 403 | The key lacks the scope, the queue is outside its patterns, or a tenant key called an operator endpoint: code `forbidden`. The key's tenant is suspended: code `tenant_suspended`. | [Problem](#problem) |
 
 ### Report failure
 
@@ -659,14 +687,16 @@ zeros. With an operator key: every tenant's queues, or one tenant's with the
 ## Queue history
 
 What happened in the tenant's queues over a recent period, bucket by bucket, for
-charts. Requires the `metrics` or `admin` scope.
+charts. Requires the `metrics` or `admin` scope, or an operator key.
 
 ### History of the tenant's queues
 
 `GET /v1/history`
 
-Every queue the key may use, added up. See [History](#history) for what is counted
-and how far back it reaches.
+Every queue the key may use, added up. With an operator key: every tenant's queues
+together, or one tenant's with the `LessorMQ-Tenant` header; the durations are
+merged before the percentiles are read, so they are those of all the messages. See
+[History](#history) for what is counted and how far back it reaches.
 
 | Parameter | In | Type | Description |
 |---|---|---|---|
@@ -769,6 +799,25 @@ Type: map of string
 | `route` | [Route](#route) |  |
 | `wait_seconds` | integer (min 0, max 20) | Wait up to this long for a message instead of returning 204 at once. Default: `0`. |
 | `lease_seconds` | integer (min 1) | Lease length for this claim, capped at the queue's `max_lease_seconds`. Defaults to the queue's `lease_seconds`. |
+| `max_messages` | integer (min 1, max 100) | Lease up to this many ready messages at once and answer a `LeaseBatch`. Without it the answer is one `Lease`. |
+
+### LeaseBatch
+
+| Field | Type | Description |
+|---|---|---|
+| `items` (required) | array of [Lease](#lease) | The leased messages, oldest first, each with its own receipt. |
+
+### AckBatchRequest
+
+| Field | Type | Description |
+|---|---|---|
+| `leases` (required) | array of object |  |
+
+### AckBatchResponse
+
+| Field | Type | Description |
+|---|---|---|
+| `items` (required) | array of object | One per lease of the request, in the same order. |
 
 ### DeliveredMessage
 

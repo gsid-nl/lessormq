@@ -27,7 +27,6 @@ server takes the message back and counts the attempt, whatever the worker is sti
 
 ```sh
 git clone https://github.com/gsid-nl/lessormq.git && cd lessormq
-composer install
 docker compose up -d --wait
 ```
 
@@ -39,12 +38,12 @@ ack with curl.
 
 | | |
 |---|---|
-| `src/`, `config/`, `migrations/` | the server: PHP 8.4, Symfony, Redis, and MariaDB, MySQL, PostgreSQL or SQLite |
+| `server/` | the server: one Go program on MariaDB, MySQL, PostgreSQL or SQLite, with Redis for several nodes; its image is `server/Dockerfile` |
 | `docs/` | the documentation, and `openapi.yaml`, the API |
 | `clients/` | libraries for [PHP](clients/php), [Symfony Messenger](clients/symfony-messenger), [Python](clients/python), [TypeScript](clients/typescript) and [Go](clients/go) |
 | `conformance/` | scenarios every client must pass, as data, with a runner |
 | `examples/` | tested workers in every language, and an [admin interface](examples/admin-ui) |
-| `docker/` | the server image |
+| `tools/` | the load test |
 
 ## Running it
 

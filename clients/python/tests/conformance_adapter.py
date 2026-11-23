@@ -43,6 +43,25 @@ def call(name: str, api_key: str, args: dict[str, Any]) -> dict[str, Any]:
             return {"status": 204, "body": None}
         if name == "fail":
             return fail(client, args)
+        if name == "claim_batch":
+            leases = client.claim_batch(
+                args["queue"],
+                int(args["max_messages"]),
+                consumer=args.get("consumer"),
+                route=args.get("route"),
+                wait_seconds=args.get("wait_seconds") or 0,
+                lease_seconds=args.get("lease_seconds"),
+            )
+            if not leases:
+                return {"status": 204, "body": None}
+            return {"status": 200, "body": {"items": [lease_body(lease) for lease in leases]}}
+        if name == "ack_batch":
+            items = args.get("leases") or []
+            outcomes = client.ack_batch([lease_of(item) for item in items])
+            return {
+                "status": 200,
+                "body": {"items": [{"message": i["message"], "outcome": o} for i, o in zip(items, outcomes)]},
+            }
         raise ValueError(f"unknown call {name}")
     except ApiError as e:
         return {"status": e.status, "body": {"code": e.code, "detail": e.detail, "errors": e.errors}}
@@ -82,21 +101,22 @@ def claim(client: Client, args: dict[str, Any]) -> dict[str, Any]:
     )
     if lease is None:
         return {"status": 204, "body": None}
+    return {"status": 200, "body": lease_body(lease)}
+
+
+def lease_body(lease: Lease) -> dict[str, Any]:
     message = lease.message
     return {
-        "status": 200,
-        "body": {
-            "receipt": lease.receipt,
-            "lease_until": format_time(lease.lease_until),
-            "message": {
-                "id": message.id,
-                "queue": message.queue,
-                "body": message.body,
-                "headers": message.headers,
-                "attempt": message.attempt,
-                "max_attempts": message.max_attempts,
-                "created_at": format_time(message.created_at),
-            },
+        "receipt": lease.receipt,
+        "lease_until": format_time(lease.lease_until),
+        "message": {
+            "id": message.id,
+            "queue": message.queue,
+            "body": message.body,
+            "headers": message.headers,
+            "attempt": message.attempt,
+            "max_attempts": message.max_attempts,
+            "created_at": format_time(message.created_at),
         },
     }
 

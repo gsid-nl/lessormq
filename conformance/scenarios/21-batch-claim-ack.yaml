@@ -1,0 +1,56 @@
+name: A claim with max_messages leases every ready message up to that number, each with its own receipt, and one request acks several leases
+steps:
+  - publish: {body: {n: 1}}
+    save: m1
+  - publish: {body: {n: 2}}
+  - publish: {body: {n: 3}}
+  - claim_http: {max_messages: 0}
+    expect: {status: 400, body.code: validation_failed, body.errors.0.field: max_messages}
+  - claim_http: {max_messages: 101}
+    expect: {status: 400, body.errors.0.field: max_messages}
+  # Oldest first, as many as asked.
+  - claim_batch: {max_messages: 2, consumer: batcher}
+    save: b1
+    expect:
+      status: 200
+      body.items.0.message.id: $m1.body.id
+      body.items.0.message.body.n: 1
+      body.items.0.message.attempt: 1
+      body.items.1.message.body.n: 2
+      body.items.0.receipt: {matches: '^[0-9a-f]{32}$'}
+      body.items.1.receipt: {not: $b1.body.items.0.receipt}
+      body.items.2: {exists: false}
+  # Fewer ready than asked: the ones there are, at once.
+  - claim_batch: {max_messages: 5}
+    save: b2
+    expect: {status: 200, body.items.0.message.body.n: 3, body.items.1: {exists: false}}
+  - claim_batch: {max_messages: 5}
+    expect: {status: 204}
+  - ack_batch:
+      leases:
+        - {message: $b1.body.items.0.message.id, receipt: $b1.body.items.0.receipt}
+        - {message: $b1.body.items.1.message.id, receipt: $b1.body.items.1.receipt}
+        # Another lease's receipt does not complete a message.
+        - {message: $b2.body.items.0.message.id, receipt: $b1.body.items.0.receipt}
+        - {message: 6f1c9a52-0f3b-11f1-9c2a-0242ac120002, receipt: 0123456789abcdef0123456789abcdef}
+    expect:
+      status: 200
+      body.items.0: {message: $b1.body.items.0.message.id, outcome: acked}
+      body.items.1.outcome: acked
+      body.items.2.outcome: lease_lost
+      body.items.3.outcome: not_found
+  # The same lease again is acked again; the third message is still held.
+  - ack_batch:
+      leases:
+        - {message: $b1.body.items.0.message.id, receipt: $b1.body.items.0.receipt}
+        - {message: $b2.body.items.0.message.id, receipt: $b2.body.items.0.receipt}
+    expect: {status: 200, body.items.0.outcome: acked, body.items.1.outcome: acked}
+  - message: {id: $m1.body.id}
+    expect: {body.status: completed}
+  - ack_batch_http: {leases: []}
+    expect: {status: 400, body.errors.0.field: leases}
+  - ack_batch_http: {leases: [{message: x}]}
+    expect: {status: 400, body.errors.0.field: 'leases[0]'}
+  # A waiting claim with max_messages is woken by a publish like any other.
+  - claim_batch: {max_messages: 10, wait_seconds: 5, publish_after: {seconds: 0.5, body: {n: 4}}}
+    expect: {status: 200, body.items.0.message.body.n: 4, elapsed: {between: [0.3, 3]}}

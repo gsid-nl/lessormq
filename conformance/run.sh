@@ -13,7 +13,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 if [ ! -f vendor/autoload.php ]; then
-    echo "Run composer install first." >&2
+    echo "Run composer install first (the runner reads the scenarios with symfony/yaml)." >&2
     exit 2
 fi
 
@@ -34,8 +34,8 @@ export LEASE_SWEEP_SECONDS=1
 compose() { docker compose -p "$project" "${files[@]}" "$@"; }
 trap 'compose down -v --remove-orphans >/dev/null 2>&1' EXIT
 
-# --build: the image must have the drivers the Dockerfile now asks for.
+# --build: the image is the server of this working tree.
 compose up -d --wait --quiet-pull --build
-key=$(compose exec -T app bin/console lessormq:operator-key:create --name=conformance | tail -n 1)
+key=$(compose exec -T app /usr/local/bin/lessormq operator-key:create --name=conformance | tail -n 1)
 
 LESSORMQ_URL="http://127.0.0.1:$LESSORMQ_PORT" LESSORMQ_OPERATOR_KEY="$key" php conformance/php/run.php "$@"

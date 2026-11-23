@@ -60,8 +60,10 @@ Every step has one action, an optional `save` and an optional `expect`. Any step
 | `publish` | adapter | `queue`, `body`, `headers`, `dedup_key`, `delay_seconds`, `available_at`, `max_attempts` |
 | `claim` | adapter | `queue`, `consumer`, `route`, `lease_seconds`, `wait_seconds`; `publish_after: {seconds, body}` publishes from another process while the claim waits |
 | `extend`, `ack`, `fail`, `release` | adapter | `lease` (a saved claim; supplies `message` and `receipt`), `receipt` or `message` to override, `lease_seconds`, `error`, `permanent`, `delay_seconds` |
+| `claim_batch` | adapter | as `claim`, with `max_messages`; the result's body is `{items: [lease, ...]}` |
+| `ack_batch` | adapter | `leases`: a list of `{message, receipt}`; the body is `{items: [{message, outcome}, ...]}` |
 | `settings` | admin API | `queue`, `set`: a queue settings patch |
-| `publish_http`, `claim_http` | plain HTTP, also when a client library runs the suite | as `publish` and `claim`: for answers a library hides, such as a 429 it waits out |
+| `publish_http`, `claim_http`, `ack_batch_http` | plain HTTP, also when a client library runs the suite | as `publish`, `claim` and `ack_batch`: for answers a library hides, such as a 429 it waits out |
 | `queue`, `message`, `replay` | admin API | `queue`; `id` |
 | `messages` | admin API | `queue`, and the list's filters: `status`, `error_type`, `search`, `limit` |
 | `replay_all`, `purge` | admin API | `queue`, `status`, `error_type`, `before`, `limit` |
@@ -85,7 +87,7 @@ matcher: `not`, `between: [low, high]`, `seconds_from_now: [low, high]`, `matche
 ## Client libraries
 
 A library passes the suite by running these scenarios through its own API instead of
-raw HTTP. It provides an adapter for the six protocol calls that calls the library and
+raw HTTP. It provides an adapter for the eight protocol calls that calls the library and
 turns its results back into `{status, body}`: an empty claim is status 204, a lease-lost
 error is status 409 with `code: lease_lost`, and so on. Setup and inspection stay on the
 admin API, so a library does not have to offer them.

@@ -1,10 +1,12 @@
-# A LessorMQ server with MariaDB and Redis, for local use and the conformance suite
-# (conformance/run.sh). Serves the working tree with PHP's built-in server, on the base
-# stage of docker/Dockerfile; not a production setup.
+# LessorMQ on your machine: the server from server/ with MariaDB and Redis, on
+# http://127.0.0.1:18080 (LESSORMQ_PORT to change it).
 #
-# On another database, add its file: compose.mysql.yaml, compose.postgresql.yaml or
-# compose.sqlite.yaml, as in
-#   docker compose -f compose.yaml -f compose.postgresql.yaml up -d --wait
+#   docker compose up
+#   docker compose exec app lessormq operator-key:create
+#
+# Another database: add its file, e.g. docker compose -f compose.yaml -f
+# compose.postgresql.yaml up (or compose.mysql.yaml, compose.sqlite.yaml). Redis is here
+# to test what several nodes share; one node runs without it.
 services:
   db:
     image: mariadb:10.11
@@ -21,32 +23,13 @@ services:
 
   app:
     build:
-      context: .
-      dockerfile: docker/Dockerfile
-      target: base
-      # A current PHP image: the Alpine packages the Dockerfile adds must match its libc.
-      pull: true
-    image: lessormq-dev:8.4
-    user: "${LESSORMQ_UID:-1000}:${LESSORMQ_GID:-1000}"
-    working_dir: /srv/lessormq
-    volumes:
-      - .:/srv/lessormq
+      context: server
+      dockerfile: Dockerfile
+    image: lessormq-dev
     environment:
-      # Its own environment, so the cache does not clash with one built on the host.
-      APP_ENV: compose
-      APP_DEBUG: "0"
       DATABASE_QUEUE_URL: mysql://root:lessormq@db:3306/lessormq?serverVersion=mariadb-10.11.0&charset=utf8mb4
-      DATABASE_URL: mysql://root:lessormq@db:3306/lessormq?serverVersion=mariadb-10.11.0&charset=utf8mb4
       REDIS_URL: redis://redis:6379
       LEASE_SWEEP_SECONDS: ${LEASE_SWEEP_SECONDS:-60}
-      PHP_CLI_SERVER_WORKERS: "8"
-    command:
-      - sh
-      - -c
-      - >-
-        bin/console cache:clear --no-warmup &&
-        bin/console doctrine:migrations:migrate --no-interaction --allow-no-migration &&
-        exec php -d variables_order=EGPCS -S 0.0.0.0:8080 -t public
     ports:
       - "127.0.0.1:${LESSORMQ_PORT:-18080}:8080"
     depends_on:
@@ -55,6 +38,6 @@ services:
       redis:
         condition: service_started
     healthcheck:
-      test: ["CMD", "php", "-r", "exit(@file_get_contents('http://127.0.0.1:8080/healthz') ? 0 : 1);"]
+      test: ["CMD", "/usr/local/bin/lessormq", "healthcheck"]
       interval: 2s
       retries: 60

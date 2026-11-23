@@ -110,6 +110,7 @@ class _Base:
         route: str | None,
         wait_seconds: int,
         lease_seconds: int | None,
+        max_messages: int | None = None,
     ) -> _Call:
         payload: dict[str, Any] = {}
         if consumer is not None:
@@ -120,9 +121,27 @@ class _Base:
             payload["wait_seconds"] = wait_seconds
         if lease_seconds is not None:
             payload["lease_seconds"] = lease_seconds
+        if max_messages is not None:
+            payload["max_messages"] = max_messages
         # A claim whose answer got lost leaves a lease that simply expires and counts as
         # an attempt, so claims are retried like the rest.
         return _Call("POST", f"/v1/queues/{_segment(queue)}/claims", payload, True, float(max(wait_seconds, 0)))
+
+    @staticmethod
+    def _ack_batch_call(leases: list[Lease]) -> _Call:
+        items = [{"message": lease.message.id, "receipt": lease.receipt} for lease in leases]
+        return _Call("POST", "/v1/acks", {"leases": items}, True)
+
+    @staticmethod
+    def _batch(response: _Response) -> list[Lease]:
+        if response.status == 204:
+            return []
+        return [Lease.from_api(item) for item in response.body.get("items", [])]
+
+    @staticmethod
+    def _outcomes(response: _Response, count: int) -> list[str]:
+        items = response.body.get("items", [])
+        return [str(items[i].get("outcome", "not_found")) if i < len(items) else "not_found" for i in range(count)]
 
     @staticmethod
     def _extend_call(lease: Lease, lease_seconds: int | None) -> _Call:
@@ -325,6 +344,30 @@ class Client(_Base):
         """
         self._send(self._ack_call(lease))
 
+    def claim_batch(
+        self,
+        queue: str,
+        max_messages: int,
+        *,
+        consumer: str | None = None,
+        route: str | None = None,
+        wait_seconds: int = 0,
+        lease_seconds: int | None = None,
+    ) -> list[Lease]:
+        """Lease up to ``max_messages`` (1 to 100) ready messages at once, oldest first, each
+        with a receipt of its own. Waits up to ``wait_seconds`` only while there is none;
+        an empty list when nothing became available. Report each lease as usual, or ack
+        them together with :meth:`ack_batch`."""
+        return self._batch(
+            self._send(self._claim_call(queue, consumer, route, wait_seconds, lease_seconds, max_messages))
+        )
+
+    def ack_batch(self, leases: list[Lease]) -> list[str]:
+        """Report success for up to 100 leases in one request. The outcomes are in the order
+        of ``leases``: ``acked`` (also when acked before), ``lease_lost``, ``not_found`` or
+        ``forbidden``; one that cannot be acked does not hold up the others."""
+        return self._outcomes(self._send(self._ack_batch_call(leases)), len(leases))
+
     def fail(
         self,
         lease: Lease,
@@ -449,6 +492,25 @@ class AsyncClient(_Base):
     async def ack(self, lease: Lease) -> None:
         """See :meth:`Client.ack`."""
         await self._send(self._ack_call(lease))
+
+    async def claim_batch(
+        self,
+        queue: str,
+        max_messages: int,
+        *,
+        consumer: str | None = None,
+        route: str | None = None,
+        wait_seconds: int = 0,
+        lease_seconds: int | None = None,
+    ) -> list[Lease]:
+        """See :meth:`Client.claim_batch`."""
+        return self._batch(
+            await self._send(self._claim_call(queue, consumer, route, wait_seconds, lease_seconds, max_messages))
+        )
+
+    async def ack_batch(self, leases: list[Lease]) -> list[str]:
+        """See :meth:`Client.ack_batch`."""
+        return self._outcomes(await self._send(self._ack_batch_call(leases)), len(leases))
 
     async def fail(
         self,

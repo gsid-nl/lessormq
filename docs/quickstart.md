@@ -6,13 +6,12 @@ description: "Run LessorMQ locally with docker compose and take a first message 
 # Quickstart
 
 A server on your machine, a tenant, and a first message through its whole life, in a few
-minutes. You need Docker, PHP 8.4 with Composer, curl and jq.
+minutes. You need Docker, curl and jq.
 
 ## Start a server
 
 ```sh
 git clone https://github.com/gsid-nl/lessormq.git && cd lessormq
-composer install
 docker compose up -d --wait
 ```
 
@@ -23,7 +22,7 @@ The server listens on `http://127.0.0.1:18080`, with MariaDB and Redis next to i
 An operator key manages tenants; a tenant's key works with its queues.
 
 ```sh
-OPERATOR_KEY=$(docker compose exec -T app bin/console lessormq:operator-key:create | tail -n 1)
+OPERATOR_KEY=$(docker compose exec -T app lessormq operator-key:create | tail -n 1)
 
 export LESSORMQ_URL=http://127.0.0.1:18080
 export LESSORMQ_KEY=$(curl -sS -X POST $LESSORMQ_URL/v1/tenants \

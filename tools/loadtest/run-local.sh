@@ -12,11 +12,10 @@ c() { docker compose -p lessormq-loadtest -f compose.yaml "$@"; }
 [ "${KEEP:-}" = 1 ] || trap 'c down -v --remove-orphans >/dev/null 2>&1' EXIT
 
 c up -d --wait --build --quiet-pull >/dev/null
-c exec -T app1 bin/console doctrine:migrations:migrate --no-interaction --allow-no-migration >/dev/null
-operator=$(c exec -T app1 bin/console lessormq:operator-key:create --name=loadtest | tail -n 1)
+operator=$(c exec -T app1 /usr/local/bin/lessormq operator-key:create --name=loadtest | tail -n 1)
 url=http://127.0.0.1:$LOADTEST_PORT
 key=$(curl -sf -X POST "$url/v1/tenants" -H "Authorization: Bearer $operator" -H 'Content-Type: application/json' \
-    -d '{"id":"loadtest","name":"Load test"}' | php -r 'echo json_decode(stream_get_contents(STDIN))->admin_key->secret;')
+    -d '{"id":"loadtest","name":"Load test"}' | jq -r .admin_key.secret)
 
 go build -o "${TMPDIR:-/tmp}/lessormq-loadtest" .
 lt() { "${TMPDIR:-/tmp}/lessormq-loadtest" -url "$url" -key "$key" "$@"; }

@@ -199,3 +199,20 @@ test("stats", async () => {
 test("the key stays out of the client's string", () => {
   assert.equal(String(client(new Fake())).includes("lmq_key"), false);
 });
+
+test("claimBatch and ackBatch", async () => {
+  const fake = new Fake()
+    .on("/v1/queues/mail/claims", [200, { items: [LEASE, { ...LEASE, receipt: "r2" }] }], [204, null])
+    .on("/v1/acks", [200, { items: [{ message: "m1", outcome: "acked" }, { message: "m1", outcome: "lease_lost" }] }]);
+  const c = client(fake);
+
+  const leases = await c.claimBatch("mail", 10, { waitSeconds: 2 });
+
+  assert.deepEqual(leases.map((lease) => lease.receipt), ["r1", "r2"]);
+  assert.deepEqual(fake.calls("/v1/queues/mail/claims")[0], { wait_seconds: 2, max_messages: 10 });
+  assert.deepEqual(await c.ackBatch(leases), ["acked", "lease_lost"]);
+  assert.deepEqual(fake.calls("/v1/acks")[0], {
+    leases: [{ message: "m1", receipt: "r1" }, { message: "m1", receipt: "r2" }],
+  });
+  assert.deepEqual(await c.claimBatch("mail", 10), []);
+});

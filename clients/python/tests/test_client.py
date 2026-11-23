@@ -238,3 +238,23 @@ async def test_async_client_speaks_the_same_protocol() -> None:
 
     assert fake.calls("/v1/messages/m1/release")[0] == {"receipt": "r1", "delay_seconds": 30}
     assert len(fake.requests) == 3
+
+
+def test_claim_batch_and_ack_batch() -> None:
+    second = {**LEASE, "receipt": "r2"}
+    fake = (
+        Fake()
+        .on("/v1/queues/mail/claims", (200, {"items": [LEASE, second]}), (204, None))
+        .on("/v1/acks", (200, {"items": [{"message": "m1", "outcome": "acked"}, {"message": "m1", "outcome": "lease_lost"}]}))
+    )
+    c = client(fake)
+
+    leases = c.claim_batch("mail", 10, wait_seconds=2)
+
+    assert [lease.receipt for lease in leases] == ["r1", "r2"]
+    assert fake.calls("/v1/queues/mail/claims")[0] == {"wait_seconds": 2, "max_messages": 10}
+    assert c.ack_batch(leases) == ["acked", "lease_lost"]
+    assert fake.calls("/v1/acks")[0] == {
+        "leases": [{"message": "m1", "receipt": "r1"}, {"message": "m1", "receipt": "r2"}]
+    }
+    assert c.claim_batch("mail", 10) == []

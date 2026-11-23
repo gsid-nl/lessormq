@@ -164,6 +164,16 @@ woken by a publish, retry, release or replay on its queue and takes the message 
 milliseconds; a delayed message is taken as soon as it is due. A paused queue behaves as
 an empty one, so workers simply wait out the pause; a resume wakes them.
 
+## Batches
+
+A worker with many short jobs can take several messages in one claim and report them in
+one request. A claim with `max_messages` leases every ready message up to that number,
+each with a receipt of its own, and answers them as a list; it waits (with `wait_seconds`)
+only while there is none. `POST /v1/acks` acks up to 100 leases at once and gives each its
+own outcome: `acked`, `lease_lost`, `not_found` or `forbidden`. Everything else holds per
+message as before: each lease runs out on its own, and a message that fails is reported
+with its own `fail`.
+
 ## Errors
 
 Every error is `application/problem+json` with a stable `code`:

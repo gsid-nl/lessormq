@@ -1,4 +1,4 @@
-# Tests for the server, every client, the documentation and the examples, on every push
+# Tests for the server (Go, server/), every client, the documentation and the examples, on every push
 # and pull request. release.yml runs all of it again on a version tag before it publishes
 # anything.
 name: ci
@@ -17,14 +17,21 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: server/go.mod
+      - name: Go
+        run: |
+          cd server
+          test -z "$(gofmt -l .)"
+          go vet ./...
+          go test -race ./...
       - uses: shivammathur/setup-php@v2
         with:
           php-version: '8.4'
-          extensions: pdo_mysql
-          tools: composer, phpcs
+          tools: composer
+      # The documentation build and the conformance runner are PHP (repository tools).
       - run: composer install --no-interaction --no-progress
-      - run: phpcs --standard=PSR12 src tests
-      - run: vendor/bin/phpunit
       - run: php docs/tools/build.php --check
 
   conformance:
