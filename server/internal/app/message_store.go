@@ -218,7 +218,9 @@ func (a *App) claimNext(ctx context.Context, tenant, queue, consumer, route stri
 	set := `status = 'processing', consumed_by = :consumer, lease_until = :lease_until,
 		route = :route, processing_started_at = :now, updated_at = :now`
 	args["consumer"] = consumer
-	args["lease_until"] = db.T(t.Add(time.Duration(leaseSeconds) * time.Second))
+	// lease_until has whole seconds, which MySQL and PostgreSQL would round up to: a lease
+	// of 2 s could last 2.5. Cut to the second, as extend does.
+	args["lease_until"] = db.T(t.Truncate(time.Second).Add(time.Duration(leaseSeconds) * time.Second))
 	args["route"] = routeValue
 	args["n"] = n
 

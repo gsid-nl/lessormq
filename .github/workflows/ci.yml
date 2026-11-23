@@ -20,6 +20,7 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
       - name: Go
         run: |
           cd server
@@ -51,6 +52,8 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version: '1.22'
+          # The client and the examples use only the standard library: nothing to cache.
+          cache: false
       - run: composer install --no-interaction --no-progress
       - name: The scenarios over plain HTTP
         run: conformance/run.sh
@@ -106,6 +109,8 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version: '1.22'
+          # The client and the examples use only the standard library: nothing to cache.
+          cache: false
       - name: PHP
         run: cd clients/php && composer install --no-interaction --no-progress && vendor/bin/phpunit
       - name: Symfony Messenger
@@ -144,5 +149,7 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version: '1.22'
+          # The client and the examples use only the standard library: nothing to cache.
+          cache: false
       - run: composer install --no-interaction --no-progress
       - run: examples/test.sh
