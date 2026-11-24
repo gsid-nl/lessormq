@@ -72,6 +72,30 @@ jobs:
           LESSORMQ_ADAPTER_CMD="node clients/typescript/test/conformance-adapter.ts" conformance/run.sh
       - name: Through the Go client
         run: LESSORMQ_ADAPTER_CMD="cd clients/go && go run ./internal/conformance" conformance/run.sh
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: '10.0.x'
+      - name: Through the .NET client
+        run: |
+          dotnet build -c Release clients/dotnet/conformance/LessorMQ.Conformance
+          LESSORMQ_ADAPTER_CMD="dotnet clients/dotnet/conformance/LessorMQ.Conformance/bin/Release/net10.0/LessorMQ.Conformance.dll" conformance/run.sh
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
+          cache-dependency-path: clients/java/pom.xml
+      # test-compile also copies the client's dependencies to target/dependency.
+      - name: Through the Java client
+        run: |
+          mvn -B -ntp -q -f clients/java/pom.xml test-compile
+          LESSORMQ_ADAPTER_CMD="java -cp 'clients/java/target/classes:clients/java/target/test-classes:clients/java/target/dependency/*' dev.lessormq.conformance.ConformanceAdapter" conformance/run.sh
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.3'
+      # The adapter needs nothing but Ruby.
+      - name: Through the Ruby client
+        run: LESSORMQ_ADAPTER_CMD="ruby clients/ruby/test/conformance_adapter.rb" conformance/run.sh
 
   # The protocol scenarios over plain HTTP with the server on each of the other
   # databases; MariaDB is the conformance job above.
@@ -134,6 +158,137 @@ jobs:
           test -z "$(gofmt -l .)"
           go vet ./...
           go test -race ./...
+      # dotnet test runs from inside clients/dotnet, where global.json picks the test
+      # platform.
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: '10.0.x'
+      - name: .NET
+        run: |
+          cd clients/dotnet
+          dotnet test -c Release
+          dotnet format LessorMQ.slnx --verify-no-changes --no-restore
+
+  # The Java client, and its Spring Boot starter on every Boot it says it works with.
+  java:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
+          cache-dependency-path: |
+            clients/java/pom.xml
+            clients/spring-boot/pom.xml
+      - name: Java
+        run: mvn -B -ntp -f clients/java/pom.xml install
+      - name: Spring Boot
+        run: |
+          for boot in 3.5.16 4.0.10 4.1.3 4.2.0; do
+            mvn -B -ntp -f clients/spring-boot/pom.xml verify -Dspring-boot.version=$boot
+          done
+
+  # The Ruby client and its Rails integration, on every Ruby and Rails still supported.
+  ruby:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {ruby: '3.3', rails: '7.2'}
+          - {ruby: '3.3', rails: '8.0'}
+          - {ruby: '3.4', rails: '8.1'}
+          - {ruby: '4.0', rails: '8.1'}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: ${{ matrix.ruby }}
+      - name: Ruby
+        run: cd clients/ruby && bundle install && bundle exec rake test
+      - name: Rails
+        env:
+          RAILS_VERSION: ${{ matrix.rails }}
+        run: cd clients/rails && bundle install && bundle exec rake test
+
+  # The Laravel driver on every Laravel it supports.
+  laravel:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {php: '8.2', testbench: '^10.0'}  # Laravel 12
+          - {php: '8.4', testbench: '^11.0'}  # Laravel 13
+    steps:
+      - uses: actions/checkout@v5
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          extensions: pcntl
+          tools: composer
+      - name: Laravel
+        working-directory: clients/laravel
+        run: |
+          composer require --dev --no-update "orchestra/testbench:${{ matrix.testbench }}"
+          composer update --no-interaction --no-progress
+          vendor/bin/phpunit
+
+  # The framework integrations end to end, against a server of this commit
+  # (conformance/with-server.sh): a job dispatched through the framework is run by its
+  # worker, retried by the queue, and dead-lettered.
+  integrations:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.4'
+      - name: Rails
+        run: |
+          cd clients/rails
+          bundle install
+          ../../conformance/with-server.sh bundle exec rake e2e
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          extensions: pcntl
+          tools: composer
+      - name: Laravel
+        run: |
+          cd clients/laravel
+          composer install --no-interaction --no-progress
+          ../../conformance/with-server.sh vendor/bin/phpunit --group e2e
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
+          cache-dependency-path: |
+            clients/java/pom.xml
+            clients/spring-boot/pom.xml
+      - name: Spring Boot
+        run: |
+          mvn -B -ntp -q -f clients/java/pom.xml install -DskipTests
+          cd clients/spring-boot
+          ../../conformance/with-server.sh mvn -B -ntp test -Dtest=EndToEndTest
+      # Django 6 needs Python 3.12. The unit tests run here too, with the end-to-end ones.
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Django and Celery
+        run: |
+          for d in django celery; do
+            (
+              cd clients/$d
+              python -m venv .venv
+              .venv/bin/pip install -q -e ../python -e '.[dev]'
+              .venv/bin/mypy
+              ../../conformance/with-server.sh .venv/bin/pytest -q
+            )
+          done
 
   examples:
     runs-on: ubuntu-latest

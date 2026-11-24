@@ -335,7 +335,8 @@ func (a *App) findAdmin(ctx context.Context, p *Principal, rawID string) (*Messa
 	return m, nil
 }
 
-// GetMessage is one message as an admin sees it.
+// GetMessage is one message as an admin sees it; a publish key sees the same, for a
+// message in one of its queues (the route checks the scope, findAdmin the queue).
 func (a *App) GetMessage(ctx context.Context, p *Principal, rawID string) (map[string]any, error) {
 	m, err := a.findAdmin(ctx, p, rawID)
 	if err != nil {

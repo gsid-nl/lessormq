@@ -385,6 +385,11 @@ paths:
       tags: [Messages]
       operationId: getMessage
       summary: Get a message
+      description: |
+        A key with the `admin` scope reads any message of its queues; a key with the
+        `publish` scope too, so a program can read back what became of a message it
+        published (its status, attempts and last error), as a task framework does for a
+        task's result.
       responses:
         '200':
           description: The message.

@@ -1,0 +1,59 @@
+{
+    "name": "lessormq/laravel",
+    "description": "Laravel queue driver for LessorMQ: the queue decides retries, backoff and dead-lettering; the driver only claims, runs, acks or fails",
+    "type": "library",
+    "license": "Apache-2.0",
+    "keywords": ["laravel", "queue", "queue-driver", "message-queue", "lessormq"],
+    "require": {
+        "php": ">=8.2",
+        "illuminate/contracts": "^12.0 || ^13.0",
+        "illuminate/queue": "^12.0 || ^13.0",
+        "illuminate/support": "^12.0 || ^13.0",
+        "lessormq/client": "^0.1",
+        "php-http/discovery": "^1.19",
+        "psr/http-client": "^1.0"
+    },
+    "require-dev": {
+        "orchestra/testbench": "^10.0 || ^11.0",
+        "phpunit/phpunit": "^11.5.50 || ^12.5.8"
+    },
+    "suggest": {
+        "ext-pcntl": "Keeps the lease alive while a long job runs, and lets queue:work enforce job timeouts"
+    },
+    "repositories": [
+        {
+            "type": "path",
+            "url": "../php",
+            "options": {"symlink": true, "versions": {"lessormq/client": "dev-main"}}
+        }
+    ],
+    "minimum-stability": "dev",
+    "prefer-stable": true,
+    "autoload": {
+        "psr-4": {
+            "LessorMQ\\Laravel\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "LessorMQ\\Laravel\\Tests\\": "tests/",
+            "LessorMQ\\Tests\\": "../php/tests/"
+        }
+    },
+    "extra": {
+        "branch-alias": {
+            "dev-main": "0.1.x-dev"
+        },
+        "laravel": {
+            "providers": [
+                "LessorMQ\\Laravel\\LessorMQServiceProvider"
+            ]
+        }
+    },
+    "config": {
+        "sort-packages": true,
+        "allow-plugins": {
+            "php-http/discovery": true
+        }
+    }
+}

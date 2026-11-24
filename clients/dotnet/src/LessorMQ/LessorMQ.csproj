@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>LessorMQ</RootNamespace>
+    <PackageId>LessorMQ</PackageId>
+    <Description>Client and worker for LessorMQ, the message queue over HTTP where the server decides and clients only claim, run, ack or fail. HttpClient and System.Text.Json only.</Description>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <IsPackable>true</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="../../README.md" Pack="true" PackagePath="/" />
+    <None Include="../../LICENSE" Pack="true" PackagePath="/" />
+    <InternalsVisibleTo Include="LessorMQ.Tests" />
+  </ItemGroup>
+
+</Project>

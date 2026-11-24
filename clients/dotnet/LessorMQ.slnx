@@ -1,0 +1,12 @@
+<Solution>
+  <Folder Name="/conformance/">
+    <Project Path="conformance/LessorMQ.Conformance/LessorMQ.Conformance.csproj" />
+  </Folder>
+  <Folder Name="/src/">
+    <Project Path="src/LessorMQ.Extensions.Hosting/LessorMQ.Extensions.Hosting.csproj" />
+    <Project Path="src/LessorMQ/LessorMQ.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/LessorMQ.Tests/LessorMQ.Tests.csproj" />
+  </Folder>
+</Solution>

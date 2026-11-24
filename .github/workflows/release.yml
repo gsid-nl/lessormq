@@ -5,11 +5,17 @@
 #   0.3.0             the server (ghcr.io/gsid-nl/lessormq:0.3.0, :0.3, :latest, and a
 #                     GitHub release with the static linux binaries for amd64 and arm64,
 #                     with a config file and systemd units, and their SHA256SUMS) and every client at 0.3.0: PyPI lessormq, npm
-#                     lessormq, Packagist lessormq/client and lessormq/messenger (tags
-#                     v0.3.0 on gsid-nl/lessormq-php and -messenger), and Go (tag v0.3.0 on
-#                     gsid-nl/lessormq-go)
+#                     lessormq, Packagist lessormq/client, lessormq/messenger and
+#                     lessormq/laravel (tags v0.3.0 on gsid-nl/lessormq-php, -messenger
+#                     and -laravel), Go (tag v0.3.0 on
+#                     gsid-nl/lessormq-go), NuGet LessorMQ and
+#                     LessorMQ.Extensions.Hosting, RubyGems lessormq and lessormq-rails, and
+#                     Maven Central dev.lessormq:lessormq and lessormq-spring-boot-starter,
+#                     and PyPI lessormq-django and lessormq-celery
 #   python-0.3.1      only that client, for a fix of its own; likewise typescript-, php-,
-#   ...               messenger- and go-
+#   ...               messenger-, laravel-, go-, dotnet-, ruby-, rails-, django- and
+#                     celery-; java- releases
+#                     the Java client and the Spring Boot starter together
 #
 # The version comes from the tag: the Python and TypeScript packages get it written in
 # when they are built, and lessormq/messenger requires lessormq/client of the same
@@ -18,11 +24,21 @@
 # (0.3.0-rc.1) is a pre-release: no :latest, no :0.3, npm dist-tag next.
 #
 # Set up once, outside this repository:
-#   - PyPI: a trusted publisher for project lessormq (gsid-nl/lessormq, release.yml).
+#   - PyPI: a trusted publisher for the projects lessormq, lessormq-django and
+#     lessormq-celery (gsid-nl/lessormq, release.yml).
 #   - npm: trusted publishing for package lessormq (gsid-nl/lessormq, release.yml).
 #   - secret SPLIT_TOKEN: a token that may push tags to gsid-nl/lessormq-php,
-#     gsid-nl/lessormq-messenger and gsid-nl/lessormq-go.
-#   - Packagist: lessormq/client and lessormq/messenger submitted from those repositories.
+#     gsid-nl/lessormq-messenger, gsid-nl/lessormq-laravel and gsid-nl/lessormq-go.
+#   - Packagist: lessormq/client, lessormq/messenger and lessormq/laravel submitted from
+#     those repositories.
+#   - NuGet: a trusted publishing policy for gsid-nl/lessormq, release.yml, and the
+#     nuget.org profile name in the repository variable NUGET_USER.
+#   - RubyGems: a trusted publisher for lessormq and for lessormq-rails (gsid-nl/lessormq,
+#     release.yml); until the gems exist, pending ones, with the owning account's id in
+#     the repository variable RUBYGEMS_OWNER.
+#   - Maven Central: the namespace dev.lessormq verified (a DNS TXT record on lessormq.dev),
+#     a Central Portal user token in the secrets CENTRAL_USERNAME and CENTRAL_PASSWORD, and
+#     a GPG key (its public half on a keyserver) in GPG_PRIVATE_KEY and GPG_PASSPHRASE.
 name: release
 
 on:
@@ -34,6 +50,13 @@ on:
       - 'php-[0-9]*'
       - 'messenger-[0-9]*'
       - 'go-[0-9]*'
+      - 'dotnet-[0-9]*'
+      - 'ruby-[0-9]*'
+      - 'rails-[0-9]*'
+      - 'laravel-[0-9]*'
+      - 'java-[0-9]*'
+      - 'django-[0-9]*'
+      - 'celery-[0-9]*'
 
 permissions:
   contents: read
@@ -63,8 +86,8 @@ jobs:
           fi
           # The clients that live in a repository of their own (PHP, Go).
           case $component in
-            server) splits='["php", "messenger", "go"]' ;;
-            php | messenger | go) splits="[\"$component\"]" ;;
+            server) splits='["php", "messenger", "laravel", "go"]' ;;
+            php | messenger | laravel | go) splits="[\"$component\"]" ;;
             *) splits='[]' ;;
           esac
           prerelease=false
@@ -180,6 +203,46 @@ jobs:
         with:
           packages-dir: clients/python/dist
 
+  # lessormq-django and lessormq-celery. A server tag releases every package at one
+  # version, so they then require that lessormq; a django- or celery- tag keeps the
+  # requirement they have, since lessormq of their version may not exist.
+  #
+  # PyPI takes one pending publisher per owner, repository, workflow and environment, so
+  # the job runs in the environment pypi: lessormq-celery's publisher names it, while
+  # lessormq-django's (without one) accepts any.
+  python-frameworks:
+    needs: [version, ci]
+    if: contains(fromJSON('["server", "django", "celery"]'), needs.version.outputs.component)
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Build, with the version of the tag
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+          COMPONENT: ${{ needs.version.outputs.component }}
+        run: |
+          set -eu
+          # PEP 440 writes a pre-release 1.2.3-rc.1 as 1.2.3rc1.
+          version=$(echo "$VERSION" | sed -E 's/-(a|alpha)\.?/a/; s/-(b|beta)\.?/b/; s/-rc\.?/rc/')
+          python -m pip install -q build
+          for d in django celery; do
+            [ "$COMPONENT" = server ] || [ "$COMPONENT" = "$d" ] || continue
+            sed -i -E "s/^__version__ = \".*\"$/__version__ = \"$version\"/" clients/$d/src/lessormq_$d/__init__.py
+            if [ "$COMPONENT" = server ]; then
+              sed -i -E "s/\"lessormq>=[^\"]*\"/\"lessormq>=$version\"/" clients/$d/pyproject.toml
+            fi
+            python -m build clients/$d --outdir dist
+          done
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist
+
   typescript:
     needs: [version, ci]
     if: contains(fromJSON('["server", "typescript"]'), needs.version.outputs.component)
@@ -208,6 +271,98 @@ jobs:
           [ "$PRERELEASE" = true ] && tag=next
           npm publish --provenance --access public --tag "$tag"
 
+  dotnet:
+    needs: [version, ci]
+    if: contains(fromJSON('["server", "dotnet"]'), needs.version.outputs.component)
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: '10.0.x'
+      # -p:Version overrides the 0.1.0 of Directory.Build.props; 1.2.3-rc.1 is a
+      # NuGet pre-release as it is.
+      - name: Pack, with the version of the tag
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: dotnet pack clients/dotnet/LessorMQ.slnx -c Release -p:Version="$VERSION" -o clients/dotnet/artifacts
+      - uses: NuGet/login@v1
+        id: nuget
+        with:
+          user: ${{ vars.NUGET_USER }}
+      - name: Publish
+        run: |
+          dotnet nuget push 'clients/dotnet/artifacts/*.nupkg' --api-key '${{ steps.nuget.outputs.NUGET_API_KEY }}' \
+            --source https://api.nuget.org/v3/index.json --skip-duplicate
+
+  # lessormq-rails requires lessormq of its own version, so lessormq goes first; a
+  # rails- tag on its own needs that lessormq published already, as messenger does.
+  ruby:
+    needs: [version, ci]
+    if: contains(fromJSON('["server", "ruby", "rails"]'), needs.version.outputs.component)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v5
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.4'
+      - uses: rubygems/configure-rubygems-credentials@v2
+        with:
+          owner: ${{ vars.RUBYGEMS_OWNER }}
+      - name: Build and push, with the version of the tag
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+          COMPONENT: ${{ needs.version.outputs.component }}
+        run: |
+          set -eu
+          # RubyGems writes a pre-release 1.2.3-rc.1 as 1.2.3.rc.1.
+          version=${VERSION/-/.}
+          sed -i -E "s/VERSION = \".*\"/VERSION = \"$version\"/" \
+            clients/ruby/lib/lessormq/version.rb clients/rails/lib/lessormq/rails/version.rb
+          if [ "$COMPONENT" != rails ]; then
+            (cd clients/ruby && gem build lessormq.gemspec && gem push "lessormq-$version.gem")
+          fi
+          if [ "$COMPONENT" != ruby ]; then
+            (cd clients/rails && gem build lessormq-rails.gemspec && gem push "lessormq-rails-$version.gem")
+          fi
+
+  # The starter requires the client of its own version, so the client goes first. The
+  # release profile adds sources, javadoc, signatures and the upload to Central.
+  java:
+    needs: [version, ci]
+    if: contains(fromJSON('["server", "java"]'), needs.version.outputs.component)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '17'
+          server-id: central
+          server-username: CENTRAL_USERNAME
+          server-password: CENTRAL_PASSWORD
+          gpg-private-key: ${{ secrets.GPG_PRIVATE_KEY }}
+          gpg-passphrase: MAVEN_GPG_PASSPHRASE
+      - name: Deploy, with the version of the tag
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+          CENTRAL_USERNAME: ${{ secrets.CENTRAL_USERNAME }}
+          CENTRAL_PASSWORD: ${{ secrets.CENTRAL_PASSWORD }}
+          MAVEN_GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+        run: |
+          set -eu
+          for d in clients/java clients/spring-boot; do
+            mvn -B -ntp -f "$d/pom.xml" org.codehaus.mojo:versions-maven-plugin:2.18.0:set \
+              -DnewVersion="$VERSION" -DgenerateBackupPoms=false
+          done
+          mvn -B -ntp -f clients/java/pom.xml -P release deploy
+          mvn -B -ntp -f clients/spring-boot/pom.xml -P release deploy
+
   # PHP and Go read a package from the root of its own repository, so these clients are
   # published as a tag on a repository that holds only that client. publish-github.sh
   # keeps their main branches current; this only adds the tag, on a commit with exactly
@@ -232,6 +387,7 @@ jobs:
           case $COMPONENT in
             php) repo=lessormq-php dir=clients/php ;;
             messenger) repo=lessormq-messenger dir=clients/symfony-messenger ;;
+            laravel) repo=lessormq-laravel dir=clients/laravel ;;
             go) repo=lessormq-go dir=clients/go ;;
           esac
           if [ -z "$SPLIT_TOKEN" ]; then
@@ -246,8 +402,9 @@ jobs:
           fi
           find split -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
           git archive "HEAD:$dir" | tar -x -C split
-          # lessormq/messenger requires lessormq/client of its own version.
-          if [ "$COMPONENT" = messenger ]; then
+          # lessormq/messenger and lessormq/laravel require lessormq/client of their own
+          # version.
+          if [ "$COMPONENT" = messenger ] || [ "$COMPONENT" = laravel ]; then
             sed -i -E "/\"require\": \\{/,/\\}/ s#(\"lessormq/client\": )\"[^\"]*\"#\\1\"^$VERSION\"#" split/composer.json
             grep -q "\"lessormq/client\": \"^$VERSION\"" split/composer.json
           fi

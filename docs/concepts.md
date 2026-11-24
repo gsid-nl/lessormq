@@ -11,10 +11,10 @@ An installation serves one or more tenants. Every request carries an API key, an
 says which tenant it belongs to: no path contains a tenant, and tenants never see each
 other's queues or messages.
 
-A key has scopes. `publish` may put messages on queues, `consume` may claim and report on
-them, `admin` may do everything inside the tenant: change queue settings, inspect and
-replay messages, manage keys. A key can also be limited to queues matching a pattern,
-such as `import-*`.
+A key has scopes. `publish` may put messages on queues and read back what became of
+them, `consume` may claim and report on them, `admin` may do everything inside the
+tenant: change queue settings, inspect and replay messages, manage keys. A key can also
+be limited to queues matching a pattern, such as `import-*`.
 
 Tenants themselves are managed with an operator key, which belongs to no tenant. It is
 created on the command line when the installation is set up, typically for a web

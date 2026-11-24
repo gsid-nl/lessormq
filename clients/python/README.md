@@ -2,19 +2,40 @@
 
 Client and worker for [LessorMQ](https://lessormq.dev), the message queue over HTTP where
 the server decides and clients only claim, run, ack or fail. Blocking and asyncio, on
-[httpx](https://www.python-httpx.org/), typed.
+[httpx](https://www.python-httpx.org/), typed. Python 3.10+. Package `lessormq`.
+
+## Install
 
 ```sh
 pip install lessormq
 ```
 
-## Publish
+## Connect
 
 ```python
 from lessormq import Client
 
 client = Client("https://mq.example.com", os.environ["LESSORMQ_KEY"])
+```
 
+The key is a tenant's API key with the scopes the program needs (`publish`, `consume`).
+Keyword options:
+
+| Option | Default | |
+|---|---|---|
+| `timeout` | 10.0 | seconds per request; a claim gets its wait on top |
+| `http_retries` | 3 | retries after a network error, a 5xx or a 429 |
+| `retry_delay` | 0.1 | seconds, times the attempt number, or the server's `Retry-After` |
+| `http` | | your own `httpx.Client` (proxies, TLS) |
+| `logger` | `logging.getLogger("lessormq")` | retries and a worker's troubles |
+| `auto_dedup_key` | True | a publish without a dedup key gets one, so a retry cannot create a second message |
+| `user_agent` | | |
+
+`AsyncClient` takes the same, for asyncio (see [Work](#work)).
+
+## Publish
+
+```python
 client.publish("mail", {"to": "ada@example.com", "template": "welcome"})
 
 client.publish(
@@ -59,7 +80,7 @@ Worker(client, "mail", send, route=os.environ.get("VPN_ID")).run()
 `lease_seconds`, `extend_every`, `auto_extend`, `handle_signals`, `max_messages`,
 `max_seconds`, `error_pause`.
 
-## asyncio
+### asyncio
 
 ```python
 from lessormq import AsyncClient, AsyncJob, AsyncWorker, Message
@@ -107,14 +128,21 @@ a problem, in subclasses for the codes a client acts on: `LeaseLostError`,
 `ValidationError`, `AuthenticationError`, `ForbiddenError`, `NotFoundError`,
 `ConflictError`, `PayloadTooLargeError`, `RateLimitedError` and `ServerError`.
 
-Network errors, 5xx and 429 are retried (`http_retries=3`, `retry_delay=0.1` seconds
-times the attempt, or the server's `Retry-After`). That is the only retrying the
-library does.
+Network errors, 5xx and 429 are retried (see [Connect](#connect)). That is the only
+retrying the library does.
 
-## Conformance
+## Development
 
-The library passes the LessorMQ conformance suite through
-`tests/conformance_adapter.py`:
+```sh
+cd clients/python
+python -m venv .venv
+.venv/bin/pip install -e '.[dev]'
+.venv/bin/pytest -q
+.venv/bin/mypy
+```
+
+The library passes the LessorMQ [conformance suite](https://github.com/gsid-nl/lessormq/tree/main/conformance)
+through `tests/conformance_adapter.py`, from the repository root:
 
 ```sh
 LESSORMQ_ADAPTER_CMD="clients/python/.venv/bin/python clients/python/tests/conformance_adapter.py" conformance/run.sh

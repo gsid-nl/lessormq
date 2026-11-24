@@ -1,0 +1,16 @@
+# frozen_string_literal: true
+
+source "https://rubygems.org"
+
+gemspec
+
+# The client from this repository, so both are tested together.
+gem "lessormq", path: "../ruby"
+
+# RAILS_VERSION=7.2 (or 8.0, 8.1) picks the Rails to test against.
+rails = ENV.fetch("RAILS_VERSION", "8.1")
+gem "activejob", "~> #{rails}.0"
+gem "railties", "~> #{rails}.0"
+
+gem "minitest", "~> 5.25"
+gem "rake", "~> 13.2"

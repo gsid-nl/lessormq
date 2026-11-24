@@ -1,0 +1,48 @@
+[build-system]
+requires = ["hatchling>=1.24"]
+build-backend = "hatchling.build"
+
+[project]
+name = "lessormq-django"
+dynamic = ["version"]
+description = "A Django tasks backend for LessorMQ, the message queue over HTTP where the server decides and workers only claim, run, ack or fail"
+readme = "README.md"
+license = "Apache-2.0"
+# Django 6.0, the first with django.tasks, needs Python 3.12.
+requires-python = ">=3.12"
+# The release writes the version of the tag into the lessormq requirement as well.
+dependencies = ["Django>=6.0", "lessormq>=0.1.0"]
+keywords = ["django", "tasks", "message-queue", "job-queue", "worker", "lessormq"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Framework :: Django",
+    "Framework :: Django :: 6.0",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Topic :: System :: Distributed Computing",
+    "Typing :: Typed",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "pytest-django>=4.9", "mypy>=1.10", "django-stubs>=5.2"]
+
+[project.urls]
+Homepage = "https://lessormq.dev"
+Documentation = "https://github.com/gsid-nl/lessormq/tree/main/clients/django"
+Source = "https://github.com/gsid-nl/lessormq"
+
+[tool.hatch.version]
+path = "src/lessormq_django/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/lessormq_django"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+DJANGO_SETTINGS_MODULE = "tests.settings"
+pythonpath = ["."]
+
+[tool.mypy]
+strict = true
+files = ["src"]

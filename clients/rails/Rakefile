@@ -1,0 +1,19 @@
+# frozen_string_literal: true
+
+require "rake/testtask"
+
+# Unit tests: ActiveJob without a server.
+Rake::TestTask.new(:test) do |t|
+  t.libs << "test"
+  t.test_files = FileList["test/unit/**/*_test.rb"]
+  t.warning = true
+end
+
+# End to end: a Rails app, its worker command and a LessorMQ server (LESSORMQ_URL and
+# LESSORMQ_OPERATOR_KEY).
+Rake::TestTask.new(:e2e) do |t|
+  t.libs << "test"
+  t.test_files = FileList["test/e2e/**/*_test.rb"]
+end
+
+task default: :test

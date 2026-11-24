@@ -1,0 +1,25 @@
+name: A key with the publish scope reads what became of a message in its queues; a consume key does not
+steps:
+  - publish: {body: {order: 7}}
+    save: m
+  - publish: {queue: other, body: {}}
+    save: o
+  - api_key: {name: shop, scopes: [publish], queues: ['*-main']}
+    save: shop
+    expect: {status: 201}
+  - api_key: {name: worker, scopes: [consume]}
+    save: worker
+    expect: {status: 201}
+  - message: {id: $m.body.id, key: $shop.body.secret}
+    expect: {status: 200, body.id: $m.body.id, body.status: pending, body.attempts: 0, body.last_error: null}
+  - claim: {}
+    save: l
+  - fail: {lease: $l, error: {type: Upstream, message: upstream slow}}
+    expect: {status: 200, body.outcome: retrying}
+  - message: {id: $m.body.id, key: $shop.body.secret}
+    expect: {status: 200, body.attempts: 1, body.last_error.type: Upstream, body.last_error.message: upstream slow}
+  # Outside the key's queue pattern.
+  - message: {id: $o.body.id, key: $shop.body.secret}
+    expect: {status: 403}
+  - message: {id: $m.body.id, key: $worker.body.secret}
+    expect: {status: 403}

@@ -3,19 +3,38 @@
 Client and worker for [LessorMQ](https://lessormq.dev), the message queue over HTTP where
 the server decides and clients only claim, run, ack or fail. Built on `fetch` with no
 dependencies: Node 20.3+, Bun, Deno and browsers. Types come from the OpenAPI
-description of the API.
+description of the API. Package `lessormq`.
+
+## Install
 
 ```sh
 npm install lessormq
 ```
 
-## Publish
+## Connect
 
 ```ts
 import { Client } from "lessormq";
 
 const client = new Client("https://mq.example.com", process.env.LESSORMQ_KEY!);
+```
 
+The key is a tenant's API key with the scopes the program needs (`publish`, `consume`).
+Options, as a third argument:
+
+| Option | Default | |
+|---|---|---|
+| `timeoutMs` | 10000 | per request; a claim gets its wait on top |
+| `httpRetries` | 3 | retries after a network error, a 5xx or a 429 |
+| `retryDelayMs` | 100 | times the attempt number, or the server's `Retry-After` |
+| `fetch` | the global one | your own (a proxy agent, a test double) |
+| `logger` | nothing logged | `console`, or anything with its methods |
+| `autoDedupKey` | true | a publish without a dedup key gets one, so a retry cannot create a second message |
+| `userAgent` | | |
+
+## Publish
+
+```ts
 await client.publish("mail", { to: "ada@example.com", template: "welcome" });
 
 await client.publish("invoices", { invoice: 1042 }, {
@@ -93,9 +112,8 @@ a problem, in subclasses for the codes a client acts on: `LeaseLostError`,
 `ValidationError`, `AuthenticationError`, `ForbiddenError`, `NotFoundError`,
 `ConflictError`, `PayloadTooLargeError`, `RateLimitedError` and `ServerError`.
 
-Network errors, 5xx and 429 are retried (`httpRetries: 3`, `retryDelayMs: 100` times the
-attempt, or the server's `Retry-After`). That is the only retrying the library does.
-Pass `logger: console` to see the retries.
+Network errors, 5xx and 429 are retried (see [Connect](#connect)). That is the only
+retrying the library does.
 
 ## Development
 
@@ -107,7 +125,8 @@ npm run generate    # src/openapi.ts from docs/openapi.yaml
 npm run build       # dist/
 ```
 
-The library passes the LessorMQ conformance suite through `test/conformance-adapter.ts`:
+The library passes the LessorMQ [conformance suite](https://github.com/gsid-nl/lessormq/tree/main/conformance)
+through `test/conformance-adapter.ts`, from the repository root:
 
 ```sh
 LESSORMQ_ADAPTER_CMD="node clients/typescript/test/conformance-adapter.ts" conformance/run.sh

@@ -116,7 +116,8 @@ func (s *Server) routes() []route {
 
 		r("POST", "/v1/acks", scoped, s.ackMany, consume...),
 
-		r("GET", "/v1/messages/{id}", scoped, s.getMessage, app.ScopeAdmin),
+		// The publisher may read back what became of its message (a task's result).
+		r("GET", "/v1/messages/{id}", scoped, s.getMessage, app.ScopePublish, app.ScopeAdmin),
 		r("DELETE", "/v1/messages/{id}", scoped, s.deleteMessage, app.ScopeAdmin),
 		r("POST", "/v1/messages/{id}/replay", scoped, s.replay, app.ScopeAdmin),
 		r("POST", "/v1/messages/{id}/extend", scoped, s.extend, consume...),

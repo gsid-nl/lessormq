@@ -1,0 +1,50 @@
+[build-system]
+requires = ["hatchling>=1.24"]
+build-backend = "hatchling.build"
+
+[project]
+name = "lessormq-celery"
+dynamic = ["version"]
+description = "Celery on LessorMQ, the message queue over HTTP where the server decides and workers only claim, run, ack or fail: a kombu transport and a base task that leave retries to the server"
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.10"
+# The release writes the version of the tag into the lessormq requirement as well.
+dependencies = ["celery>=5.5,<6", "kombu>=5.5,<6", "lessormq>=0.1.0"]
+keywords = ["celery", "kombu", "message-queue", "job-queue", "worker", "lessormq"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Framework :: Celery",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Topic :: System :: Distributed Computing",
+    "Typing :: Typed",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "mypy>=1.10"]
+
+[project.urls]
+Homepage = "https://lessormq.dev"
+Documentation = "https://github.com/gsid-nl/lessormq/tree/main/clients/celery"
+Source = "https://github.com/gsid-nl/lessormq"
+
+[tool.hatch.version]
+path = "src/lessormq_celery/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/lessormq_celery"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.mypy]
+strict = true
+files = ["src"]
+# Celery has no type hints and kombu only some: allow building on them.
+ignore_missing_imports = true
+disallow_subclassing_any = false
+disallow_untyped_calls = false
+disallow_untyped_decorators = false

@@ -223,7 +223,13 @@ export interface paths {
             };
             cookie?: never;
         };
-        /** Get a message */
+        /**
+         * Get a message
+         * @description A key with the `admin` scope reads any message of its queues; a key with the
+         *     `publish` scope too, so a program can read back what became of a message it
+         *     published (its status, attempts and last error), as a task framework does for a
+         *     task's result.
+         */
         get: operations["getMessage"];
         put?: never;
         post?: never;

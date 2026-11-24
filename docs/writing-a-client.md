@@ -6,9 +6,8 @@ description: "What a LessorMQ client does, the rules it follows, and how the con
 # Writing a client
 
 A LessorMQ client is small on purpose: it claims, runs a handler, and reports. All
-policy lives on the server. There are libraries for PHP, Symfony Messenger, Python,
-TypeScript and Go (see the [examples](examples.md)); this page is for a language that has
-none yet. The [protocol](protocol.md) and the curl [quickstart](quickstart.md) show every
+policy lives on the server. The [client libraries](clients/index.md) cover the common
+languages and frameworks; this page is for a language that has none yet. The [protocol](protocol.md) and the curl [quickstart](quickstart.md) show every
 call on the wire.
 
 ## The loop

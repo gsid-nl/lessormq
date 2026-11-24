@@ -8,6 +8,10 @@
  *   self-hosting.md  its blocks that show a file the release tarball installs (the first
  *                    line names where it goes, such as # /etc/lessormq/lessormq.conf),
  *                    from that file in server/packaging
+ *   clients/         a page per library from its README (which registries show too),
+ *                    and the overview from tools/clients.template.md; every README
+ *                    follows the outline of a language library or of a framework
+ *                    integration (CLIENTS below)
  *
  *   php docs/tools/build.php           write them
  *   php docs/tools/build.php --check   exit 1 when one is out of date (for CI)
@@ -23,13 +27,44 @@ use Symfony\Component\Yaml\Yaml;
 
 const SOURCE = 'https://github.com/gsid-nl/lessormq/blob/main/';
 
+/** The sections of a README, in this order; ### subsections are free. */
+const OUTLINES = [
+    'language' => ['Install', 'Connect', 'Publish', 'Work', 'Without the worker', 'Errors', 'Development'],
+    'framework' => [
+        'Install',
+        'Configure',
+        'Dispatch',
+        'Run workers',
+        'How it behaves',
+        'Moving from another queue',
+        'Development',
+    ],
+];
+
+/** Every directory in clients/, with its outline, in the order of the overview. */
+const CLIENTS = [
+    'php' => 'language',
+    'python' => 'language',
+    'typescript' => 'language',
+    'go' => 'language',
+    'java' => 'language',
+    'dotnet' => 'language',
+    'ruby' => 'language',
+    'symfony-messenger' => 'framework',
+    'laravel' => 'framework',
+    'spring-boot' => 'framework',
+    'django' => 'framework',
+    'celery' => 'framework',
+    'rails' => 'framework',
+];
+
 $docs = dirname(__DIR__);
 $root = dirname($docs);
 $pages = [
     'api.md' => apiReference(Yaml::parseFile($docs . '/openapi.yaml')),
     'examples.md' => examples((string) file_get_contents(__DIR__ . '/examples.template.md'), $root),
     'self-hosting.md' => packaged((string) file_get_contents($docs . '/self-hosting.md'), $root),
-];
+] + clientPages((string) file_get_contents(__DIR__ . '/clients.template.md'), $root);
 $check = in_array('--check', $argv, true);
 $stale = [];
 
@@ -43,6 +78,7 @@ foreach ($pages as $name => $content) {
     if ($check) {
         $stale[] = $name;
     } else {
+        is_dir(dirname($path)) || mkdir(dirname($path), 0777, true);
         file_put_contents($path, $content);
         echo "wrote docs/$name\n";
     }
@@ -76,6 +112,115 @@ function examples(string $template, string $root): string
     };
 
     return (string) preg_replace_callback('/^\{\{ (\S+) \}\}$/m', $include, $template);
+}
+
+/**
+ * The pages of docs/clients/: one per library from its README, and the overview.
+ *
+ * @return array<string, string> page => content
+ */
+function clientPages(string $template, string $root): array
+{
+    $found = array_map('basename', array_map('dirname', glob($root . '/clients/*/README.md') ?: []));
+    $unlisted = array_diff($found, array_keys(CLIENTS));
+
+    if ($unlisted !== []) {
+        throw new RuntimeException(
+            'Add to CLIENTS in docs/tools/build.php: clients/' . implode(', clients/', $unlisted),
+        );
+    }
+
+    $pages = [];
+    $rows = ['language' => [], 'framework' => []];
+
+    foreach (CLIENTS as $dir => $kind) {
+        $readme = (string) file_get_contents($root . '/clients/' . $dir . '/README.md');
+        [$title, $description, $install] = readme($dir, $readme, OUTLINES[$kind]);
+        $pages['clients/' . $dir . '.md'] = clientPage($dir, $readme, $title, $description);
+        $name = preg_replace('/^LessorMQ for /', '', $title);
+        $rows[$kind][] = sprintf('| [%s](%s.md) | `%s` |', $name, $dir, $install);
+    }
+
+    $table = static fn (string $head, array $rows): string => "| $head | Install |\n|---|---|\n" . implode("\n", $rows);
+    $pages['clients/index.md'] = strtr($template, [
+        '{{ languages }}' => $table('Language', $rows['language']),
+        '{{ frameworks }}' => $table('Framework', $rows['framework']),
+    ]);
+
+    return $pages;
+}
+
+/**
+ * Checks a README against its outline.
+ *
+ * @param list<string> $outline
+ * @return array{0: string, 1: string, 2: string} title, description, install command
+ */
+function readme(string $dir, string $readme, array $outline): array
+{
+    $where = "clients/$dir/README.md";
+
+    if (!preg_match('/\A# (.+)\n\n((?:.+\n)+)/', $readme, $head)) {
+        throw new RuntimeException("$where: start with '# LessorMQ for ...' and a paragraph.");
+    }
+
+    preg_match_all('/^## (.+)$/m', $readme, $sections);
+
+    if ($sections[1] !== $outline) {
+        throw new RuntimeException(sprintf(
+            "%s: the sections must be %s, not %s.",
+            $where,
+            implode(', ', $outline),
+            implode(', ', $sections[1]),
+        ));
+    }
+
+    if (preg_match('/\]\((?!https?:\/\/|#)([^)]*)\)/', $readme, $relative)) {
+        throw new RuntimeException("$where: link to $relative[1] with a full URL; registries show this file too.");
+    }
+
+    // The first line of the first block: the install command, or the package's
+    // coordinates where there is none (Maven).
+    if (!preg_match('/^## Install\n(?:.*\n)*?```\w*\n(.+)\n/m', $readme, $install)) {
+        throw new RuntimeException("$where: '## Install' needs a block with the install command first.");
+    }
+
+    $paragraph = preg_replace(['/\[([^\]]+)\]\([^)]+\)/', '/`/', '/\s+/'], ['$1', '', ' '], trim($head[2]));
+    $sentence = preg_match('/^.+?\.(?= |$)/', (string) $paragraph, $first) ? $first[0] : (string) $paragraph;
+
+    return [$head[1], $sentence, $install[1]];
+}
+
+/**
+ * A README as a page of the site: links into the documentation made relative.
+ */
+function clientPage(string $dir, string $readme, string $title, string $description): string
+{
+    $body = preg_replace_callback(
+        '/\]\(https:\/\/lessormq\.dev(\/docs(?:\/([^)#]*))?)?(#[^)]*)?\)/',
+        static function (array $match): string {
+            $page = $match[2] ?? '';
+            $anchor = $match[3] ?? '';
+            $target = match (true) {
+                $page === '' => '../../README.md',
+                str_starts_with($page, 'clients/') => substr($page, 8) . '.md',
+                default => '../' . $page . '.md',
+            };
+
+            return '](' . $target . $anchor . ')';
+        },
+        $readme,
+    );
+
+    return sprintf(
+        "---\ntitle: %s\ndescription: %s\n---\n\n%s\n_From [clients/%s/README.md](%sclients/%s/README.md)._\n",
+        json_encode($title, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE),
+        json_encode($description, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE),
+        rtrim((string) $body) . "\n",
+        $dir,
+        SOURCE,
+        $dir,
+    );
 }
 
 /**

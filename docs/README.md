@@ -51,9 +51,14 @@ server takes the message back and counts the attempt, whatever the worker is sti
 - [Quickstart](quickstart.md): a server on your machine and a first message with curl.
 - [Concepts](concepts.md): queues, leases, attempts, the dead-letter set, routes, tenants.
 
+## Client libraries
+
+- [Client libraries](clients/index.md): every library, for each language and framework,
+  and how to install it.
+
 ## Guides
 
-- [Examples](examples.md): workers in PHP, Symfony Messenger, Python, TypeScript and Go.
+- [Examples](examples.md): complete workers to copy, each one tested.
 - [Writing a client](writing-a-client.md): what a conforming client does, and how to prove it.
 - [Self-hosting](self-hosting.md): configuration, scaling, metrics and alerts.
 

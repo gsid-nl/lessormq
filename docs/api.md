@@ -346,6 +346,11 @@ Newest first. Paginated with an opaque cursor. The filters combine.
 
 `GET /v1/messages/{id}`
 
+A key with the `admin` scope reads any message of its queues; a key with the
+`publish` scope too, so a program can read back what became of a message it
+published (its status, attempts and last error), as a task framework does for a
+task's result.
+
 | Parameter | In | Type | Description |
 |---|---|---|---|
 | `id` (required) | path | string | Message id as returned by publish or claim. Opaque to clients. |
