@@ -207,9 +207,9 @@ jobs:
   # version, so they then require that lessormq; a django- or celery- tag keeps the
   # requirement they have, since lessormq of their version may not exist.
   #
-  # PyPI takes one pending publisher per owner, repository, workflow and environment, so
-  # the job runs in the environment pypi: lessormq-celery's publisher names it, while
-  # lessormq-django's (without one) accepts any.
+  # The job runs in the environment pypi, and both projects' trusted publishers name it:
+  # PyPI issues a token for one publisher, so with two different ones it is valid for
+  # one project only. skip-existing lets a job that failed halfway run again.
   python-frameworks:
     needs: [version, ci]
     if: contains(fromJSON('["server", "django", "celery"]'), needs.version.outputs.component)
@@ -242,6 +242,7 @@ jobs:
       - uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: dist
+          skip-existing: true
 
   typescript:
     needs: [version, ci]
@@ -311,7 +312,8 @@ jobs:
       - uses: ruby/setup-ruby@v1
         with:
           ruby-version: '3.4'
-      - uses: rubygems/configure-rubygems-credentials@v2
+      # The action has no major-version tag.
+      - uses: rubygems/configure-rubygems-credentials@v2.2.0
         with:
           owner: ${{ vars.RUBYGEMS_OWNER }}
       - name: Build and push, with the version of the tag
