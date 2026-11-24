@@ -1718,7 +1718,7 @@ components:
           description: The dead-letter set.
         oldest_ready_seconds:
           type: integer
-          description: How long the oldest ready message has been waiting. Grows when no worker takes the queue.
+          description: How long the oldest ready message has been waiting, counted from when it was published or last put back (retry, release, replay). Grows when no worker takes the queue.
         oldest_processing_seconds:
           type: integer
         workers:

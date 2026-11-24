@@ -19,8 +19,9 @@ const (
 )
 
 // replayAssignments put a finished message back in line: attempts to zero, no error, no
-// lease, available now.
-const replayAssignments = `status = 'pending', retry_count = 0, processing_after = NULL, processing_started_at = NULL,
+// lease, available now. processing_after = now, not NULL: the wait (oldest_ready_seconds,
+// history) counts from the replay, not from when the message was first published.
+const replayAssignments = `status = 'pending', retry_count = 0, processing_after = :now, processing_started_at = NULL,
 	processed_at = NULL, failed_at = NULL, consumed_by = NULL, receipt = NULL, lease_until = NULL,
 	route = NULL, failed_routes = NULL, error_message = NULL, error_details = NULL, updated_at = :now,
 	dedup_open = dedup_key`

@@ -585,7 +585,9 @@ func (a *App) Release(ctx context.Context, p *Principal, rawID string, in *Input
 	if err != nil {
 		return err
 	}
-	var after any
+	// Without a delay the message is ready now; the wait counts from here, not from
+	// when it was published (time spent processing is no waiting).
+	after := db.T(now())
 	if delay > 0 {
 		after = db.T(now().Add(time.Duration(delay) * time.Second))
 	}

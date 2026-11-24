@@ -1010,7 +1010,7 @@ Any subset of the queue settings; nested objects are merged.
 | `processing` (required) | integer |  |
 | `completed` (required) | integer | Completed and not yet removed by retention. Counted at most every 30 seconds (they can be many); the other figures are current. |
 | `failed` (required) | integer | The dead-letter set. |
-| `oldest_ready_seconds` (required) | integer | How long the oldest ready message has been waiting. Grows when no worker takes the queue. |
+| `oldest_ready_seconds` (required) | integer | How long the oldest ready message has been waiting, counted from when it was published or last put back (retry, release, replay). Grows when no worker takes the queue. |
 | `oldest_processing_seconds` (required) | integer |  |
 | `workers` | integer | Workers that claimed from the queue in the last minute or hold one of its messages. |
 
