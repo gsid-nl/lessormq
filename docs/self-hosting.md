@@ -57,7 +57,11 @@ docker run --rm --env-file lessormq.env ghcr.io/gsid-nl/lessormq:<version> purge
 
 Every GitHub release also has the binary on its own, the same static build as the image:
 `lessormq-<version>-linux-amd64.tar.gz` and `-linux-arm64.tar.gz`, with `SHA256SUMS`
-over both. Check the tarball against it, then run the binary as a service of its own:
+over both. Each tarball holds the binary, an example configuration file (`lessormq.conf`)
+and systemd units for the server and the [scheduled jobs](#scheduled-jobs) (`systemd/`);
+the same files are in the repository, in
+[server/packaging](https://github.com/gsid-nl/lessormq/tree/main/server/packaging). As
+root:
 
 ```sh
 # The latest release; or set v to the one you want.
@@ -66,39 +70,188 @@ curl -fsSLO https://github.com/gsid-nl/lessormq/releases/download/$v/lessormq-$v
 curl -fsSLO https://github.com/gsid-nl/lessormq/releases/download/$v/SHA256SUMS
 sha256sum --check --ignore-missing SHA256SUMS
 tar -xzf lessormq-$v-linux-amd64.tar.gz
-install -m 0755 lessormq-$v-linux-amd64/lessormq /usr/local/bin/lessormq
+cd lessormq-$v-linux-amd64
+
+install -m 0755 lessormq /usr/local/bin/lessormq
+useradd --system --home-dir /var/lib/lessormq --shell /usr/sbin/nologin lessormq
+install -d -m 0750 -o root -g lessormq /etc/lessormq
+install -m 0640 -o root -g lessormq lessormq.conf /etc/lessormq/lessormq.conf
+install -m 0644 systemd/* /etc/systemd/system/
 ```
+
+### The database
+
+LessorMQ needs a database and a user that may change its tables; it makes the tables
+itself when it starts. On MariaDB or MySQL:
+
+```sql
+CREATE DATABASE lessormq CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE USER 'lessormq'@'localhost' IDENTIFIED BY 'secret';
+GRANT ALL PRIVILEGES ON lessormq.* TO 'lessormq'@'localhost';
+```
+
+On PostgreSQL:
+
+```sql
+CREATE ROLE lessormq LOGIN PASSWORD 'secret';
+CREATE DATABASE lessormq OWNER lessormq;
+```
+
+SQLite needs nothing: the server makes the file, in `/var/lib/lessormq`.
+
+### The configuration file
+
+`/etc/lessormq/lessormq.conf` holds the [configuration](#configuration), one `NAME=value`
+per line. Set `DATABASE_QUEUE_URL` to the database (a password with characters such as
+`@`, `:` or `/` is percent-encoded there). The file holds that password, so only root and
+the service read it:
+
+```ini
+# /etc/lessormq/lessormq.conf
+# LessorMQ's configuration on a host without containers: NAME=value, one per line, the
+# names of the environment variables in docs/self-hosting.md. An environment variable
+# that is set overrides the line here. The file holds the database password: 0640,
+# root:lessormq.
+
+# The database. MySQL: ?serverVersion=8.4.0; PostgreSQL:
+# postgresql://lessormq:secret@127.0.0.1:5432/lessormq; SQLite:
+# sqlite:////var/lib/lessormq/lessormq.db
+DATABASE_QUEUE_URL=mysql://lessormq:secret@127.0.0.1:3306/lessormq?serverVersion=mariadb-10.11.0
+
+# Only on localhost: a proxy in front of it does TLS.
+LISTEN=127.0.0.1:8080
+
+# Only for several nodes.
+#REDIS_URL=redis://127.0.0.1:6379/0
+
+# The origins of browser interfaces that call /v1, such as the admin interface.
+#CORS_ALLOW_ORIGIN=^https://admin\.example\.com$
+```
+
+### The service
 
 ```ini
 # /etc/systemd/system/lessormq.service
 [Unit]
 Description=LessorMQ
-After=network-online.target mariadb.service
+Documentation=https://lessormq.dev/docs/self-hosting
+# Only ordering: a database on this host starts first. The server also waits a minute for
+# a database that is not there yet.
+After=network-online.target mariadb.service mysql.service postgresql.service redis-server.service valkey.service
 Wants=network-online.target
 
 [Service]
 User=lessormq
 Group=lessormq
-EnvironmentFile=/etc/lessormq/lessormq.env
-ExecStart=/usr/local/bin/lessormq serve
-Restart=always
-NoNewPrivileges=true
-ProtectSystem=strict
+ExecStart=/usr/local/bin/lessormq --config /etc/lessormq/lessormq.conf serve
+Restart=on-failure
+RestartSec=5
+# Waiting claims answer at once; the rest finishes within 25 seconds.
+TimeoutStopSec=30
+# /var/lib/lessormq, for a SQLite database.
 StateDirectory=lessormq
+StateDirectoryMode=0750
+UMask=0027
+
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged
+SystemCallErrorNumber=EPERM
 
 [Install]
 WantedBy=multi-user.target
 ```
 
-`/etc/lessormq/lessormq.env` holds the [configuration](#configuration), readable by the
-service only (it has the database password). On one host, `LISTEN=127.0.0.1:8080` keeps
-the server off the network; the [scheduled jobs](#scheduled-jobs) run as the same user
-with the same file, from cron or a systemd timer. `StateDirectory` gives the service
-`/var/lib/lessormq`, which is where a SQLite database goes.
+```sh
+systemctl daemon-reload
+systemctl enable --now lessormq.service lessormq-purge.timer lessormq-reap.timer
+curl http://127.0.0.1:8080/healthz
+```
+
+The server and its jobs run as `lessormq`, without capabilities, with the system read-only
+and home directories out of sight. They write only to `/var/lib/lessormq`, where a SQLite
+database goes. A database on the same host starts before them. `lessormq-purge.timer` runs
+`purge-old-messages` every 15 minutes and `lessormq-reap.timer` runs `tenants:reap` every
+hour (`systemctl list-timers 'lessormq-*'`); with several nodes, enable the timers on one of
+them. Logs are JSON lines in the journal: `journalctl -u lessormq`.
+
+A command by hand runs as the same user, and reads the same file:
+
+```sh
+sudo -u lessormq lessormq operator-key:create --name=admin
+```
+
+### TLS
+
+The server speaks plain HTTP, so a proxy in front of it does TLS. A claim waits up to 20
+seconds for work (`wait_seconds`), so the proxy must wait longer than that for an answer;
+nginx waits 60 seconds by default. A request body may be up to 16 MiB, more than nginx
+takes by default. With nginx, exposing only [what should be exposed](#what-to-expose):
+
+```nginx
+server {
+    listen 443 ssl;
+    server_name mq.example.com;
+    ssl_certificate /etc/letsencrypt/live/mq.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/mq.example.com/privkey.pem;
+    client_max_body_size 16m;
+
+    location /v1/ {
+        proxy_pass http://127.0.0.1:8080;
+    }
+    location = /healthz {
+        proxy_pass http://127.0.0.1:8080;
+    }
+    location / {
+        return 404;
+    }
+}
+```
+
+### Upgrading
+
+Download and check the new release as above, install its binary over the old one and
+restart the service; it migrates the schema when it starts (read the release notes first:
+a migration of a large table can take a while, see [Configuration](#configuration)). A
+node that stops answers its waiting claims at once and finishes the rest of its requests,
+and a lease does not belong to a node, so restarting several nodes one after the other
+loses no work.
+
+```sh
+install -m 0755 lessormq /usr/local/bin/lessormq
+systemctl restart lessormq.service
+```
+
+The units and the example file in the tarball change rarely; compare them with the
+installed ones when they do.
 
 ## Configuration
 
-Environment variables:
+Environment variables, or the same names in a configuration file of `NAME=value` lines:
+`lessormq --config FILE`, or `/etc/lessormq/lessormq.conf` when it exists (as in
+[Without containers](#without-containers)). A variable set in the environment overrides
+the file; a name the file does not know stops the server, so a typo is not ignored.
+Blank lines and lines that start with `#` are skipped, a value in quotes loses them, and
+nothing else in a value is special.
 
 | Variable | |
 |---|---|
@@ -180,6 +333,9 @@ It calls the server from the browser, so the server must allow its origin:
 |---|---|---|
 | `lessormq purge-old-messages` | every 15 minutes | removes finished messages past their queue's retention |
 | `lessormq tenants:reap` | hourly | removes the data of deleted tenants |
+
+Without containers, the timers of the systemd units run them (see
+[The service](#the-service)). With several nodes, one of them runs them.
 
 ## What to expose
 

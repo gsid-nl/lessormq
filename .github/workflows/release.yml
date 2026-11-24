@@ -3,8 +3,8 @@
 # everything:
 #
 #   0.3.0             the server (ghcr.io/gsid-nl/lessormq:0.3.0, :0.3, :latest, and a
-#                     GitHub release with the static linux binaries for amd64 and arm64
-#                     and their SHA256SUMS) and every client at 0.3.0: PyPI lessormq, npm
+#                     GitHub release with the static linux binaries for amd64 and arm64,
+#                     with a config file and systemd units, and their SHA256SUMS) and every client at 0.3.0: PyPI lessormq, npm
 #                     lessormq, Packagist lessormq/client and lessormq/messenger (tags
 #                     v0.3.0 on gsid-nl/lessormq-php and -messenger), and Go (tag v0.3.0 on
 #                     gsid-nl/lessormq-go)
@@ -125,7 +125,8 @@ jobs:
           tags: ${{ steps.tags.outputs.list }}
       # The binary of the image on its own, for hosts without containers (a systemd
       # service, see docs/self-hosting.md): the same static build, one tarball per
-      # architecture with the licence, and SHA256SUMS over the tarballs.
+      # architecture with the licence, an example lessormq.conf and the systemd units
+      # (server/packaging), and SHA256SUMS over the tarballs.
       - uses: actions/setup-go@v6
         with:
           go-version-file: server/go.mod
@@ -142,6 +143,7 @@ jobs:
               go build -trimpath -ldflags "-s -w -X main.version=$VERSION" \
               -o "build/$name/lessormq" ./cmd/lessormq
             cp ../LICENSE "build/$name/"
+            cp -R packaging/. "build/$name/"
             tar -C build -czf "../dist/$name.tar.gz" "$name"
           done
           (cd ../dist && sha256sum *.tar.gz > SHA256SUMS)

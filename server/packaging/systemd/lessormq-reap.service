@@ -1,0 +1,38 @@
+[Unit]
+Description=LessorMQ: remove the data of deleted tenants
+Documentation=https://lessormq.dev/docs/self-hosting
+After=network-online.target mariadb.service mysql.service postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=lessormq
+Group=lessormq
+ExecStart=/usr/local/bin/lessormq --config /etc/lessormq/lessormq.conf tenants:reap
+StateDirectory=lessormq
+StateDirectoryMode=0750
+UMask=0027
+
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged
+SystemCallErrorNumber=EPERM

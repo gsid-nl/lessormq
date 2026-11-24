@@ -1,13 +1,16 @@
 <?php
 
 /*
- * Builds the two generated pages of the documentation:
+ * Builds the generated parts of the documentation:
  *
- *   api.md       from openapi.yaml
- *   examples.md  from tools/examples.template.md and the tested files in examples/
+ *   api.md           from openapi.yaml
+ *   examples.md      from tools/examples.template.md and the tested files in examples/
+ *   self-hosting.md  its blocks that show a file the release tarball installs (the first
+ *                    line names where it goes, such as # /etc/lessormq/lessormq.conf),
+ *                    from that file in server/packaging
  *
  *   php docs/tools/build.php           write them
- *   php docs/tools/build.php --check   exit 1 when either is out of date (for CI)
+ *   php docs/tools/build.php --check   exit 1 when one is out of date (for CI)
  *
  * tools/ is not published: the CeeMS docs sync skips it.
  */
@@ -25,6 +28,7 @@ $root = dirname($docs);
 $pages = [
     'api.md' => apiReference(Yaml::parseFile($docs . '/openapi.yaml')),
     'examples.md' => examples((string) file_get_contents(__DIR__ . '/examples.template.md'), $root),
+    'self-hosting.md' => packaged((string) file_get_contents($docs . '/self-hosting.md'), $root),
 ];
 $check = in_array('--check', $argv, true);
 $stale = [];
@@ -72,6 +76,35 @@ function examples(string $template, string $root): string
     };
 
     return (string) preg_replace_callback('/^\{\{ (\S+) \}\}$/m', $include, $template);
+}
+
+/**
+ * Fills each block whose first line names where a packaged file is installed with that file.
+ */
+function packaged(string $page, string $root): string
+{
+    $installed = [
+        '/etc/lessormq/' => 'server/packaging/',
+        '/etc/systemd/system/' => 'server/packaging/systemd/',
+    ];
+
+    $fill = static function (array $match) use ($root, $installed): string {
+        $dir = dirname($match[2]) . '/';
+
+        if (!isset($installed[$dir])) {
+            return $match[0];
+        }
+
+        $file = $installed[$dir] . basename($match[2]);
+
+        if (!is_file($root . '/' . $file)) {
+            throw new RuntimeException('self-hosting.md shows a file that is not packaged: ' . $file);
+        }
+
+        return $match[1] . rtrim((string) file_get_contents($root . '/' . $file)) . "\n```";
+    };
+
+    return (string) preg_replace_callback('/^(```\w*\n# (\/etc\/\S+)\n).*?^```$/ms', $fill, $page);
 }
 
 /**

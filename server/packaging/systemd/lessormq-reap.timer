@@ -1,0 +1,10 @@
+[Unit]
+Description=LessorMQ: remove the data of deleted tenants every hour
+
+[Timer]
+OnCalendar=hourly
+RandomizedDelaySec=300
+Persistent=true
+
+[Install]
+WantedBy=timers.target

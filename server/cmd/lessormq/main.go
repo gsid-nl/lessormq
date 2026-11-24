@@ -10,6 +10,8 @@
 // Configuration comes from the environment: DATABASE_QUEUE_URL (required), REDIS_URL
 // (only for several nodes), LISTEN (default :8080), LEASE_SWEEP_SECONDS, MAX_WAITING_CLAIMS,
 // CORS_ALLOW_ORIGIN, DB_MAX_CONNECTIONS, MIGRATE (0 to skip migrating on start), LOG_LEVEL.
+// A file of the same NAME=value lines can set them too: --config FILE, or
+// /etc/lessormq/lessormq.conf when it exists; the environment overrides the file.
 package main
 
 import (
@@ -37,13 +39,16 @@ import (
 var version = "dev"
 
 func main() {
+	args, err := configure(os.Args[1:])
 	log := logger()
-	args := os.Args[1:]
+	if err != nil {
+		log.Error(err.Error())
+		os.Exit(1)
+	}
 	command := "serve"
 	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
 		command, args = args[0], args[1:]
 	}
-	var err error
 	switch command {
 	case "serve":
 		err = serve(log)
@@ -60,7 +65,7 @@ func main() {
 	case "version", "--version":
 		fmt.Println(version)
 	case "help", "-h", "--help":
-		fmt.Println("lessormq [serve|migrate|operator-key:create|purge-old-messages|tenants:reap|healthcheck|version]")
+		fmt.Println("lessormq [--config FILE] [serve|migrate|operator-key:create|purge-old-messages|tenants:reap|healthcheck|version]")
 	default:
 		err = fmt.Errorf("unknown command %q", command)
 	}

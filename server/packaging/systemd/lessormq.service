@@ -1,0 +1,47 @@
+[Unit]
+Description=LessorMQ
+Documentation=https://lessormq.dev/docs/self-hosting
+# Only ordering: a database on this host starts first. The server also waits a minute for
+# a database that is not there yet.
+After=network-online.target mariadb.service mysql.service postgresql.service redis-server.service valkey.service
+Wants=network-online.target
+
+[Service]
+User=lessormq
+Group=lessormq
+ExecStart=/usr/local/bin/lessormq --config /etc/lessormq/lessormq.conf serve
+Restart=on-failure
+RestartSec=5
+# Waiting claims answer at once; the rest finishes within 25 seconds.
+TimeoutStopSec=30
+# /var/lib/lessormq, for a SQLite database.
+StateDirectory=lessormq
+StateDirectoryMode=0750
+UMask=0027
+
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged
+SystemCallErrorNumber=EPERM
+
+[Install]
+WantedBy=multi-user.target
