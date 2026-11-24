@@ -3,7 +3,8 @@
 # everything:
 #
 #   0.3.0             the server (ghcr.io/gsid-nl/lessormq:0.3.0, :0.3, :latest, and a
-#                     GitHub release) and every client at 0.3.0: PyPI lessormq, npm
+#                     GitHub release with the static linux binaries for amd64 and arm64
+#                     and their SHA256SUMS) and every client at 0.3.0: PyPI lessormq, npm
 #                     lessormq, Packagist lessormq/client and lessormq/messenger (tags
 #                     v0.3.0 on gsid-nl/lessormq-php and -messenger), and Go (tag v0.3.0 on
 #                     gsid-nl/lessormq-go)
@@ -122,6 +123,28 @@ jobs:
             org.opencontainers.image.version=${{ env.VERSION }}
             org.opencontainers.image.revision=${{ github.sha }}
           tags: ${{ steps.tags.outputs.list }}
+      # The binary of the image on its own, for hosts without containers (a systemd
+      # service, see docs/self-hosting.md): the same static build, one tarball per
+      # architecture with the licence, and SHA256SUMS over the tarballs.
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+      - name: Binaries
+        working-directory: server
+        run: |
+          set -eu
+          mkdir -p ../dist
+          for arch in amd64 arm64; do
+            name=lessormq-$VERSION-linux-$arch
+            mkdir -p "build/$name"
+            CGO_ENABLED=0 GOOS=linux GOARCH=$arch \
+              go build -trimpath -ldflags "-s -w -X main.version=$VERSION" \
+              -o "build/$name/lessormq" ./cmd/lessormq
+            cp ../LICENSE "build/$name/"
+            tar -C build -czf "../dist/$name.tar.gz" "$name"
+          done
+          (cd ../dist && sha256sum *.tar.gz > SHA256SUMS)
       - name: GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -129,7 +152,7 @@ jobs:
           flags=()
           [ "$PRERELEASE" = true ] && flags+=(--prerelease)
           gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes \
-            --title "LessorMQ $VERSION" "${flags[@]}"
+            --title "LessorMQ $VERSION" "${flags[@]}" dist/*
 
   python:
     needs: [version, ci]

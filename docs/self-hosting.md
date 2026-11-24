@@ -1,6 +1,6 @@
 ---
 title: Self-hosting
-description: "Running LessorMQ yourself: the image, configuration, scheduled jobs, sizing, metrics and alerts."
+description: "Running LessorMQ yourself: the image or the binary as a service, configuration, scheduled jobs, sizing, metrics and alerts."
 ---
 
 # Self-hosting
@@ -52,6 +52,49 @@ docker run --rm --env-file lessormq.env ghcr.io/gsid-nl/lessormq:<version> purge
 | `lessormq purge-old-messages` | remove finished messages past their queue's retention |
 | `lessormq tenants:reap` | remove the data of deleted tenants |
 | `lessormq healthcheck` | exit 0 while this node's `/healthz` answers 200 (for a container health check) |
+
+## Without containers
+
+Every GitHub release also has the binary on its own, the same static build as the image:
+`lessormq-<version>-linux-amd64.tar.gz` and `-linux-arm64.tar.gz`, with `SHA256SUMS`
+over both. Check the tarball against it, then run the binary as a service of its own:
+
+```sh
+# The latest release; or set v to the one you want.
+v=$(curl -fsSL https://api.github.com/repos/gsid-nl/lessormq/releases/latest | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p')
+curl -fsSLO https://github.com/gsid-nl/lessormq/releases/download/$v/lessormq-$v-linux-amd64.tar.gz
+curl -fsSLO https://github.com/gsid-nl/lessormq/releases/download/$v/SHA256SUMS
+sha256sum --check --ignore-missing SHA256SUMS
+tar -xzf lessormq-$v-linux-amd64.tar.gz
+install -m 0755 lessormq-$v-linux-amd64/lessormq /usr/local/bin/lessormq
+```
+
+```ini
+# /etc/systemd/system/lessormq.service
+[Unit]
+Description=LessorMQ
+After=network-online.target mariadb.service
+Wants=network-online.target
+
+[Service]
+User=lessormq
+Group=lessormq
+EnvironmentFile=/etc/lessormq/lessormq.env
+ExecStart=/usr/local/bin/lessormq serve
+Restart=always
+NoNewPrivileges=true
+ProtectSystem=strict
+StateDirectory=lessormq
+
+[Install]
+WantedBy=multi-user.target
+```
+
+`/etc/lessormq/lessormq.env` holds the [configuration](#configuration), readable by the
+service only (it has the database password). On one host, `LISTEN=127.0.0.1:8080` keeps
+the server off the network; the [scheduled jobs](#scheduled-jobs) run as the same user
+with the same file, from cron or a systemd timer. `StateDirectory` gives the service
+`/var/lib/lessormq`, which is where a SQLite database goes.
 
 ## Configuration
 
