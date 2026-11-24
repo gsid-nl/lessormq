@@ -5,7 +5,7 @@ description: "Client and worker for LessorMQ, the message queue over HTTP where 
 
 # LessorMQ for Java
 
-Client and worker for [LessorMQ](../../README.md), the message queue over HTTP where
+Client and worker for [LessorMQ](https://lessormq.dev/), the message queue over HTTP where
 the server decides and clients only claim, run, ack or fail. Java 17 or newer, and Kotlin
 just as well: every type is annotated for nullness (JSpecify) and every exception is
 unchecked. It speaks HTTP with the JDK's `java.net.http` and JSON with Jackson 3; nothing

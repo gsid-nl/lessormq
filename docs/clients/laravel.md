@@ -5,7 +5,7 @@ description: "A Laravel queue driver for LessorMQ, built on lessormq/client."
 
 # LessorMQ for Laravel
 
-A Laravel queue driver for [LessorMQ](../../README.md), built on
+A Laravel queue driver for [LessorMQ](https://lessormq.dev/), built on
 [lessormq/client](php.md). The queue decides what happens
 to a failed job (retries, backoff, the dead-letter set); the driver only claims, acks and
 fails. Laravel 12 and 13 on PHP 8.2+ (Laravel 13 needs PHP 8.3). Package

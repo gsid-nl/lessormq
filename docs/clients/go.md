@@ -5,7 +5,7 @@ description: "Client and worker for LessorMQ, the message queue over HTTP where 
 
 # LessorMQ for Go
 
-Client and worker for [LessorMQ](../../README.md), the message queue over HTTP where
+Client and worker for [LessorMQ](https://lessormq.dev/), the message queue over HTTP where
 the server decides and clients only claim, run, ack or fail. Standard library only:
 `net/http`, `context` and `log/slog`. Go 1.22+. Module `github.com/gsid-nl/lessormq-go`.
 

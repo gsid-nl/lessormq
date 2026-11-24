@@ -5,7 +5,7 @@ description: "An ActiveJob queue adapter and worker for LessorMQ, the message qu
 
 # LessorMQ for Rails
 
-An ActiveJob queue adapter and worker for [LessorMQ](../../README.md), the message
+An ActiveJob queue adapter and worker for [LessorMQ](https://lessormq.dev/), the message
 queue over HTTP where the server decides and clients only claim, run, ack or fail. The
 queue decides what happens to a failed job (another attempt, when, or the dead-letter
 set); Rails only enqueues jobs and runs them.

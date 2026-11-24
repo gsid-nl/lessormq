@@ -5,7 +5,7 @@ description: "Client and worker for LessorMQ, the message queue over HTTP where 
 
 # LessorMQ for TypeScript and JavaScript
 
-Client and worker for [LessorMQ](../../README.md), the message queue over HTTP where
+Client and worker for [LessorMQ](https://lessormq.dev/), the message queue over HTTP where
 the server decides and clients only claim, run, ack or fail. Built on `fetch` with no
 dependencies: Node 20.3+, Bun, Deno and browsers. Types come from the OpenAPI
 description of the API. Package `lessormq`.

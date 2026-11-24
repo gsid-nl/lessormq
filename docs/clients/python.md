@@ -5,7 +5,7 @@ description: "Client and worker for LessorMQ, the message queue over HTTP where 
 
 # LessorMQ for Python
 
-Client and worker for [LessorMQ](../../README.md), the message queue over HTTP where
+Client and worker for [LessorMQ](https://lessormq.dev/), the message queue over HTTP where
 the server decides and clients only claim, run, ack or fail. Blocking and asyncio, on
 [httpx](https://www.python-httpx.org/), typed. Python 3.10+. Package `lessormq`.
 

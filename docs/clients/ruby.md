@@ -5,7 +5,7 @@ description: "Client and worker for LessorMQ, the message queue over HTTP where 
 
 # LessorMQ for Ruby
 
-Client and worker for [LessorMQ](../../README.md), the message queue over HTTP where
+Client and worker for [LessorMQ](https://lessormq.dev/), the message queue over HTTP where
 the server decides and clients only claim, run, ack or fail. Retries, backoff, attempts
 and the dead-letter set are the queue's settings; this library reports what happened and
 leaves the rest to the server.

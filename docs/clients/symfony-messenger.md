@@ -5,7 +5,7 @@ description: "A Messenger transport on LessorMQ, built on lessormq/client."
 
 # LessorMQ for Symfony Messenger
 
-A Messenger transport on [LessorMQ](../../README.md), built on
+A Messenger transport on [LessorMQ](https://lessormq.dev/), built on
 [lessormq/client](php.md). The queue decides what happens to a failed message
 (retries, backoff, the dead-letter set); the transport only claims, acks and fails.
 Symfony 7.2+ and PHP 8.2+. Package `lessormq/messenger`.

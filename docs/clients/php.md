@@ -5,7 +5,7 @@ description: "Client and worker for LessorMQ, the message queue over HTTP where 
 
 # LessorMQ for PHP
 
-Client and worker for [LessorMQ](../../README.md), the message queue over HTTP
+Client and worker for [LessorMQ](https://lessormq.dev/), the message queue over HTTP
 where the server decides and clients only claim, run, ack or fail. PHP 8.2+. Package
 `lessormq/client`.
 

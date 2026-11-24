@@ -5,7 +5,7 @@ description: "Celery on LessorMQ, the message queue over HTTP where the server d
 
 # LessorMQ for Celery
 
-Celery on [LessorMQ](../../README.md), the message queue over HTTP where the server
+Celery on [LessorMQ](https://lessormq.dev/), the message queue over HTTP where the server
 decides and workers only claim, run, ack or fail. It is a kombu transport (broker URL
 `lessormq://`) and a base task class. Celery publishes and runs tasks as usual, but
 retries, backoff, the number of attempts and the dead-letter set are settings of the

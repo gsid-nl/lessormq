@@ -5,7 +5,7 @@ description: "A backend for Django's tasks framework (django.tasks) on LessorMQ,
 
 # LessorMQ for Django
 
-A backend for Django's tasks framework (`django.tasks`) on [LessorMQ](../../README.md),
+A backend for Django's tasks framework (`django.tasks`) on [LessorMQ](https://lessormq.dev/),
 the message queue over HTTP where the server decides and workers only claim, run, ack or
 fail. `enqueue()` publishes a task to a LessorMQ queue and `manage.py lessormq_worker`
 runs it. Retries, backoff and the dead-letter set are settings of the queue on the

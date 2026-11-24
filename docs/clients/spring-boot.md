@@ -5,7 +5,7 @@ description: "A Spring Boot starter for LessorMQ, the message queue over HTTP wh
 
 # LessorMQ for Spring Boot
 
-A Spring Boot starter for [LessorMQ](../../README.md), the message queue over HTTP
+A Spring Boot starter for [LessorMQ](https://lessormq.dev/), the message queue over HTTP
 where the server decides and clients only claim, run, ack or fail. It configures a
 `LessorMQClient` bean from `lessormq.*` properties and runs `@LessorMQListener` methods in
 workers that start and stop with the application. The queue decides what happens to a

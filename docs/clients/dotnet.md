@@ -5,7 +5,7 @@ description: "Client and worker for LessorMQ, the message queue over HTTP where 
 
 # LessorMQ for .NET
 
-Client and worker for [LessorMQ](../../README.md), the message queue over HTTP where
+Client and worker for [LessorMQ](https://lessormq.dev/), the message queue over HTTP where
 the server decides and clients only claim, run, ack or fail. Async throughout, with
 `HttpClient` and `System.Text.Json` only, and nullable annotations. Targets .NET 10, the
 current LTS, and runs on any later runtime.

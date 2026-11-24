@@ -193,6 +193,14 @@ function readme(string $dir, string $readme, array $outline): array
 
 /**
  * A README as a page of the site: links into the documentation made relative.
+ *
+ * A link to the site itself (https://lessormq.dev, or /docs without a page)
+ * stays absolute. Made relative it would point at a README.md outside docs/,
+ * which the CeeMS docs sync does not mount: it refuses the whole run over it
+ * ("README.md of GSID/lessormq@0.4.10 is not mounted"), and lessormq.dev
+ * stopped updating on 24 November 2026. The site's home is not a page of
+ * docs/ (docs/README.md is excluded there), so there is nothing relative to
+ * point at.
  */
 function clientPage(string $dir, string $readme, string $title, string $description): string
 {
@@ -202,7 +210,7 @@ function clientPage(string $dir, string $readme, string $title, string $descript
             $page = $match[2] ?? '';
             $anchor = $match[3] ?? '';
             $target = match (true) {
-                $page === '' => '../../README.md',
+                $page === '' => 'https://lessormq.dev/',
                 str_starts_with($page, 'clients/') => substr($page, 8) . '.md',
                 default => '../' . $page . '.md',
             };
