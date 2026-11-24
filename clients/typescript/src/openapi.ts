@@ -815,6 +815,11 @@ export interface components {
             max_attempts: number;
             /** Format: date-time */
             available_at: string;
+            /**
+             * Format: date-time
+             * @description When the current or last attempt was claimed. Null while the message waits for an attempt, also after a retry, a release or a replay. With `available_at` and `completed_at` it gives how long the last attempt waited and ran.
+             */
+            started_at?: string | null;
             /** Format: date-time */
             lease_until?: string | null;
             /** @description The `consumer` of the current or last claim. */
@@ -949,7 +954,7 @@ export interface components {
             completed: number;
             /** @description The dead-letter set. */
             failed: number;
-            /** @description How long the oldest ready message has been waiting. Grows when no worker takes the queue. */
+            /** @description How long the oldest ready message has been waiting, counted from when it was published or last put back (retry, release, replay). Grows when no worker takes the queue. */
             oldest_ready_seconds: number;
             oldest_processing_seconds: number;
             /** @description Workers that claimed from the queue in the last minute or hold one of its messages. */

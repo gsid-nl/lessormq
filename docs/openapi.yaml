@@ -1500,6 +1500,13 @@ components:
         available_at:
           type: string
           format: date-time
+        started_at:
+          type: [string, 'null']
+          format: date-time
+          description: >-
+            When the current or last attempt was claimed. Null while the message waits for an
+            attempt, also after a retry, a release or a replay. With `available_at` and
+            `completed_at` it gives how long the last attempt waited and ran.
         lease_until:
           type: [string, 'null']
           format: date-time

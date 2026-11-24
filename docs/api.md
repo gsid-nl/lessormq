@@ -912,6 +912,7 @@ The full message, as an administrator sees it.
 | `attempts` (required) | integer (min 0) | Attempts started so far; an expired lease counts, a release does not. |
 | `max_attempts` (required) | integer |  |
 | `available_at` (required) | string (date-time) |  |
+| `started_at` | string or null (date-time) | When the current or last attempt was claimed. Null while the message waits for an attempt, also after a retry, a release or a replay. With `available_at` and `completed_at` it gives how long the last attempt waited and ran. |
 | `lease_until` | string or null (date-time) |  |
 | `consumer` | string or null | The `consumer` of the current or last claim. |
 | `last_error` | [RecordedError](#recordederror) or null |  |

@@ -234,6 +234,7 @@ func messageView(m *Message, c *QueueConfig) map[string]any {
 		"attempts":      m.Attempts(),
 		"max_attempts":  c.MaxAttemptsFor(m.MaxAttempts),
 		"available_at":  formatTimeV(available),
+		"started_at":    formatTime(m.ProcessingStartedAt),
 		"lease_until":   nil,
 		"consumer":      m.ConsumedBy,
 		"last_error":    lastError(m),

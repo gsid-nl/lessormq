@@ -21,4 +21,4 @@ steps:
   - claim: {}
     expect: {status: 204}
   - message: {id: $m.body.id}
-    expect: {status: 200, body.status: completed, body.attempts: 1, body.completed_at: {matches: 'Z$'}}
+    expect: {status: 200, body.status: completed, body.attempts: 1, body.started_at: {matches: 'Z$'}, body.completed_at: {matches: 'Z$'}}
