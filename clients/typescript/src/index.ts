@@ -12,6 +12,7 @@
  */
 
 export { Client, USER_AGENT } from "./client.ts";
+export { VERSION } from "./version.ts";
 export type { AckOutcome, CallOptions, ClaimOptions, ClientOptions, FailOptions, Logger, PublishOptions } from "./client.ts";
 export {
   ApiError,

@@ -16,6 +16,8 @@ import time
 import traceback
 from dataclasses import dataclass
 from datetime import datetime
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as _version
 from typing import Any
 from urllib.parse import quote
 
@@ -24,9 +26,19 @@ import httpx
 from ._errors import ApiError, PermanentFailure, RateLimitedError, ServerError, TransportError
 from ._models import FailResult, Lease, Published, Stats, format_time, parse_time
 
-__all__ = ["AsyncClient", "Client"]
+__all__ = ["USER_AGENT", "AsyncClient", "Client"]
 
-USER_AGENT = "lessormq-python/1"
+
+def _installed_version(distribution: str) -> str:
+    """The version pip installed, such as 0.4.10; dev when the package runs from a checkout."""
+    try:
+        return _version(distribution)
+    except PackageNotFoundError:
+        return "dev"
+
+
+#: Sent with every request unless user_agent says otherwise: lessormq-python/0.4.10.
+USER_AGENT = "lessormq-python/" + _installed_version("lessormq")
 _MAX_ERROR_MESSAGE = 65535
 _MAX_ERROR_TYPE = 255
 

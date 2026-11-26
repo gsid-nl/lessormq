@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
 
 import {
@@ -9,6 +10,7 @@ import {
   ServerError,
   TransportError,
   ValidationError,
+  VERSION,
   type ClientOptions,
 } from "../src/index.ts";
 import { FAIL_RESULT, Fake, LEASE, PUBLISHED } from "./fake.ts";
@@ -32,7 +34,12 @@ test("publish sends the body and an automatic dedup key", async () => {
   assert.deepEqual(published.availableAt, new Date("2030-01-01T00:00:00Z"));
   const headers = fake.requests[0]!.init.headers as Record<string, string>;
   assert.equal(headers.Authorization, "Bearer lmq_key");
-  assert.match(headers["User-Agent"]!, /^lessormq-js\//);
+  assert.equal(headers["User-Agent"], `lessormq-js/${VERSION}`);
+});
+
+test("the version is the one in package.json, which the release sets as well", () => {
+  const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version: string };
+  assert.equal(VERSION, pkg.version);
 });
 
 test("publish keeps null bodies, encodes queue names and writes times in UTC", async () => {

@@ -30,7 +30,7 @@ public class LessorMQAutoConfiguration {
                 .retryDelay(properties.getRetryDelay())
                 .timeout(properties.getTimeout())
                 .autoDedupKey(properties.isAutoDedupKey())
-                .userAgent(LessorMQClient.USER_AGENT + " spring-boot");
+                .userAgent("lessormq-spring-boot/" + Version.VALUE + " " + LessorMQClient.USER_AGENT);
         jsonMapper.ifUnique(builder::jsonMapper);
         customizers.orderedStream().forEach(customizer -> customizer.customize(builder));
         return builder.build();

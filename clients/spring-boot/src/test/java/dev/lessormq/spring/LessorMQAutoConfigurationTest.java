@@ -99,6 +99,16 @@ class LessorMQAutoConfigurationTest {
     }
 
     @Test
+    void theUserAgentNamesTheStarterAndTheClientWithTheirVersions() {
+        runner.run(context -> {
+            fake.on("/v1/queues/mail/messages", 201, "{\"id\":\"m1\",\"duplicate\":false}");
+            context.getBean(LessorMQClient.class).publish("mail", new Mail("ada@example.com"));
+            assertThat(fake.requests().get(0).headers().get("User-agent")).singleElement().asString()
+                    .matches("lessormq-spring-boot/\\d+\\.\\d+\\.\\d+\\S* " + LessorMQClient.USER_AGENT);
+        });
+    }
+
+    @Test
     void theApplicationsJsonMapperAndCustomizersAreUsed() {
         JsonMapper mapper = JsonMapper.builder().build();
         runner.withBean(JsonMapper.class, () -> mapper)

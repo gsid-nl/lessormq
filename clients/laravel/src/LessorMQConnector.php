@@ -7,6 +7,7 @@ namespace LessorMQ\Laravel;
 use Illuminate\Queue\Connectors\ConnectorInterface;
 use LessorMQ\Client;
 use LessorMQ\ClientOptions;
+use LessorMQ\UserAgent;
 use Psr\Log\LoggerInterface;
 use Psr\Log\NullLogger;
 
@@ -59,7 +60,10 @@ final class LessorMQConnector implements ConnectorInterface
         return new Client(
             $options->url,
             $options->key,
-            new ClientOptions(httpRetries: $retries, userAgent: 'lessormq-laravel/1'),
+            new ClientOptions(
+                httpRetries: $retries,
+                userAgent: UserAgent::product('lessormq-laravel', 'lessormq/laravel') . ' ' . UserAgent::default(),
+            ),
             $this->http->create($timeout),
             null,
             null,

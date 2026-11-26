@@ -13,7 +13,8 @@ module LessorMQ
   #
   # Thread-safe: a worker's keepalive thread shares it.
   class Client
-    USER_AGENT = "lessormq-ruby/1"
+    # Sent with every request unless user_agent says otherwise: lessormq-ruby/0.4.10.
+    USER_AGENT = "lessormq-ruby/#{LessorMQ::VERSION}"
     MAX_ERROR_MESSAGE = 65_535
     MAX_ERROR_TYPE = 255
 

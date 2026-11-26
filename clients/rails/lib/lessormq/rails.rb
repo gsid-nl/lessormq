@@ -10,6 +10,9 @@ module LessorMQ
   #
   # Inside this module +Rails+ is LessorMQ::Rails: the framework is always ::Rails.
   module Rails
+    # lessormq-rails/0.4.10 lessormq-ruby/0.4.10: this adapter and the client it runs on.
+    USER_AGENT = "lessormq-rails/#{VERSION} #{LessorMQ::Client::USER_AGENT}"
+
     # How to reach the server and how the worker claims. There is nothing about retries:
     # those are the queue's settings.
     class Configuration
@@ -44,7 +47,8 @@ module LessorMQ
             raise ArgumentError, "LessorMQ: set config.lessormq.url and api_key (or LESSORMQ_URL and LESSORMQ_KEY)" \
               if url.to_s.empty? || api_key.to_s.empty?
 
-            LessorMQ::Client.new(url, api_key, http_retries: http_retries, timeout: timeout, logger: logger)
+            LessorMQ::Client.new(url, api_key, http_retries: http_retries, timeout: timeout, logger: logger,
+                                               user_agent: USER_AGENT)
           end
         end
       end

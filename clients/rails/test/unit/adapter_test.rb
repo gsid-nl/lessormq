@@ -95,6 +95,8 @@ class AdapterTest < ActiveSupport::TestCase
 
     assert_instance_of LessorMQ::Client, config.client
     assert_same config.client, config.client
+    assert_equal "lessormq-rails/#{LessorMQ::Rails::VERSION} lessormq-ruby/#{LessorMQ::VERSION}",
+                 config.client.instance_variable_get(:@user_agent)
     refute_includes config.inspect, "lmq_secret"
     assert_raises(ArgumentError) { LessorMQ::Rails::Configuration.new.tap { |c| c.url = nil }.client }
   end

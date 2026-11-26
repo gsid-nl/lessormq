@@ -32,6 +32,7 @@ public sealed class ClientTests
         Assert.Equal("POST", call.Method);
         Assert.Equal("Bearer lmq_key", call.Authorization);
         Assert.Equal(LessorMQClient.DefaultUserAgent, call.UserAgent);
+        Assert.Matches(@"^lessormq-dotnet/\d+\.\d+\.\d+", call.UserAgent);
         Assert.Equal("application/json", call.ContentType);
         Assert.Equal("ada@example.com", (string?)call.Body!["body"]!["to"]);
         Assert.Equal("Welcome", (string?)call.Body["headers"]!["type"]);

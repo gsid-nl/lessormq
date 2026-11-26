@@ -8,7 +8,7 @@ clients only claim, run, ack or fail.
     Worker(client, "mail", lambda message, job: send(message.body)).run()
 """
 
-from ._client import AsyncClient, Client
+from ._client import USER_AGENT, AsyncClient, Client
 from ._errors import (
     ApiError,
     AuthenticationError,
@@ -28,6 +28,7 @@ from ._models import FailResult, Lease, Message, Published, Stats
 from ._worker import AsyncJob, AsyncWorker, Job, Worker
 
 __all__ = [
+    "USER_AGENT",
     "ApiError",
     "AsyncClient",
     "AsyncJob",

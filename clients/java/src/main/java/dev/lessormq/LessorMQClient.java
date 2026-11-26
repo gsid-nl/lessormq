@@ -32,8 +32,11 @@ import tools.jackson.databind.node.ObjectNode;
  * every call that is safe to repeat.
  */
 public final class LessorMQClient {
-    /** Sent with every request unless {@link Builder#userAgent} says otherwise. */
-    public static final String USER_AGENT = "lessormq-java/1";
+    /** The version of this library, such as 0.4.10. */
+    public static final String VERSION = Version.VALUE;
+
+    /** Sent with every request unless {@link Builder#userAgent} says otherwise: lessormq-java/0.4.10. */
+    public static final String USER_AGENT = "lessormq-java/" + VERSION;
 
     private static final int MAX_ERROR_MESSAGE = 65535;
     private static final int MAX_ERROR_TYPE = 255;

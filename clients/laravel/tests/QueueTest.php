@@ -40,7 +40,10 @@ class QueueTest extends FakeServerTestCase
         $this->assertStringStartsWith('lmq-auto-', $sent['dedup_key'], 'safe to retry');
         $this->assertArrayNotHasKey('max_attempts', $sent, 'the queue decides');
         $this->assertArrayNotHasKey('delay_seconds', $sent);
-        $this->assertSame('lessormq-laravel/1', $this->server()->sent[0]->getHeaderLine('User-Agent'));
+        $this->assertMatchesRegularExpression(
+            '#^lessormq-laravel/\S+ lessormq-php/\S+$#',
+            $this->server()->sent[0]->getHeaderLine('User-Agent'),
+        );
     }
 
     public function testDelayTriesAndDeduplicationIdBecomeTheMessagesOptions(): void

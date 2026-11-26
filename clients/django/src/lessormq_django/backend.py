@@ -11,6 +11,8 @@ import re
 import time
 from dataclasses import replace
 from datetime import datetime
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as _version
 from typing import TYPE_CHECKING, Any, ParamSpec, TypeVar, cast
 from urllib.parse import quote
 
@@ -25,6 +27,7 @@ from django.tasks.exceptions import TaskResultDoesNotExist
 from django.tasks.signals import task_enqueued
 from django.utils import timezone
 from django.utils.json import normalize_json
+from lessormq import USER_AGENT as CLIENT_USER_AGENT
 from lessormq import ApiError, Client, NotFoundError, RateLimitedError, ServerError, TransportError
 
 from . import _messages
@@ -32,7 +35,17 @@ from .exceptions import LeaseExpired, MalformedTask
 
 __all__ = ["LessorMQBackend", "LessorMQTaskResult"]
 
-USER_AGENT = "lessormq-django/1"
+
+def _installed_version(distribution: str) -> str:
+    """The version pip installed, such as 0.4.10; dev when the package runs from a checkout."""
+    try:
+        return _version(distribution)
+    except PackageNotFoundError:
+        return "dev"
+
+
+#: lessormq-django/0.4.10 lessormq-python/0.4.10: this backend and the client it runs on.
+USER_AGENT = f"lessormq-django/{_installed_version('lessormq-django')} {CLIENT_USER_AGENT}"
 _P = ParamSpec("_P")
 _R = TypeVar("_R")
 _QUEUE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$")

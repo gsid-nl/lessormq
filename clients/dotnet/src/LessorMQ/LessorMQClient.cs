@@ -1,4 +1,5 @@
 using System.Net.Http.Headers;
+using System.Reflection;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -20,8 +21,11 @@ namespace LessorMQ;
 /// </summary>
 public sealed class LessorMQClient : IDisposable
 {
-    /// <summary>The User-Agent sent unless <see cref="LessorMQClientOptions.UserAgent"/> says otherwise.</summary>
-    public const string DefaultUserAgent = "lessormq-dotnet/1";
+    /// <summary>
+    /// The User-Agent sent unless <see cref="LessorMQClientOptions.UserAgent"/> says otherwise:
+    /// lessormq-dotnet and the version of this assembly, such as lessormq-dotnet/0.4.10.
+    /// </summary>
+    public static readonly string DefaultUserAgent = "lessormq-dotnet/" + AssemblyVersion();
 
     private const int MaxErrorMessage = 65535;
     private const int MaxErrorType = 255;
@@ -278,6 +282,19 @@ public sealed class LessorMQClient : IDisposable
     {
         var call = new Call(HttpMethod.Get, "/v1/queues/" + Uri.EscapeDataString(queue), null, Repeatable: true);
         return Decode<WireQueue>(await SendAsync(call, cancellationToken).ConfigureAwait(false), call).Stats ?? new QueueStats();
+    }
+
+    /// <summary>The package version the assembly was built with, without the commit the SDK appends after a +.</summary>
+    private static string AssemblyVersion()
+    {
+        var version = typeof(LessorMQClient).Assembly
+            .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion;
+        if (string.IsNullOrEmpty(version))
+        {
+            return "unknown";
+        }
+        var plus = version.IndexOf('+');
+        return plus < 0 ? version : version[..plus];
     }
 
     /// <summary>Disposes the HttpClient the client made; one you passed in stays yours.</summary>

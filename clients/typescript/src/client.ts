@@ -22,10 +22,12 @@ import {
   type Stats,
 } from "./models.ts";
 import type { components } from "./openapi.ts";
+import { VERSION } from "./version.ts";
 
 type Schemas = components["schemas"];
 
-export const USER_AGENT = "lessormq-js/1";
+/** Sent with every request unless `userAgent` says otherwise: lessormq-js/0.4.10. */
+export const USER_AGENT = `lessormq-js/${VERSION}`;
 
 /** Where the library logs its own retries and a worker's troubles. `console` fits. */
 export interface Logger {

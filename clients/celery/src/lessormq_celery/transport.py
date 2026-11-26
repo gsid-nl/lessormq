@@ -24,6 +24,8 @@ import threading
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as _version
 from queue import Empty
 from typing import Any
 from urllib.parse import unquote, urlsplit
@@ -31,13 +33,23 @@ from uuid import uuid4
 
 from kombu.transport import virtual
 
+from lessormq import USER_AGENT as CLIENT_USER_AGENT
 from lessormq import Client, Lease, LeaseLostError, LessorMQError, RateLimitedError, ServerError, TransportError
 
 __all__ = ["Channel", "MalformedMessage", "Options", "Outcome", "Transport"]
 
 logger = logging.getLogger("lessormq_celery")
 
-USER_AGENT = "lessormq-celery/1"
+
+def _installed_version(distribution: str) -> str:
+    """The version pip installed, such as 0.4.10; dev when the package runs from a checkout."""
+    try:
+        return _version(distribution)
+    except PackageNotFoundError:
+        return "dev"
+
+#: lessormq-celery/0.4.10 lessormq-python/0.4.10: this transport and the client it runs on.
+USER_AGENT = f"lessormq-celery/{_installed_version('lessormq-celery')} {CLIENT_USER_AGENT}"
 
 
 class MalformedMessage(Exception):

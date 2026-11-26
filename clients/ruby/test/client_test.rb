@@ -25,7 +25,7 @@ class ClientTest < Minitest::Test
     request = fake.requests.first
     assert_equal "Bearer lmq_key", request.headers["Authorization"]
     assert_equal "application/json", request.headers["Content-Type"]
-    assert request.headers["User-Agent"].start_with?("lessormq-ruby/")
+    assert_equal "lessormq-ruby/#{LessorMQ::VERSION}", request.headers["User-Agent"]
   end
 
   def test_publish_keeps_null_bodies_encodes_the_queue_and_formats_times_in_utc

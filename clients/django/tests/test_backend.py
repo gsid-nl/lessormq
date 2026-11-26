@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -65,7 +66,7 @@ def test_enqueue_publishes_the_task_as_json_to_the_prefixed_queue(fake: Fake) ->
     assert sent[0]["dedup_key"].startswith("lmq-auto-")
     assert "available_at" not in sent[0]
     assert fake.requests[0].headers["Authorization"] == "Bearer k"
-    assert fake.requests[0].headers["User-Agent"] == "lessormq-django/1"
+    assert re.fullmatch(r"lessormq-django/\S+ lessormq-python/\S+", fake.requests[0].headers["User-Agent"])
 
     assert result.id == "m1"
     assert result.status == TaskResultStatus.READY

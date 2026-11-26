@@ -59,6 +59,7 @@ class ClientTest {
         assertEquals("POST", request.method());
         assertEquals(List.of("Bearer lmq_key"), request.headers().get("Authorization"));
         assertEquals(List.of(LessorMQClient.USER_AGENT), request.headers().get("User-agent"));
+        assertTrue(LessorMQClient.USER_AGENT.matches("lessormq-java/\\d+\\.\\d+\\.\\d+.*"), LessorMQClient.USER_AGENT);
         JsonNode sent = request.body();
         assertEquals("ada@example.com", sent.path("body").path("to").asString());
         assertEquals("Welcome", sent.path("headers").path("type").asString());
